@@ -96,20 +96,26 @@ export interface MitreTechnique {
 
 export interface ThreatAnalysis {
   threat_summary: string;
-  mitre_techniques: MitreTechnique[];
-  detection_review: {
-    false_positive_sources: string[];
-    evasion_blindspots: string[];
-    time_window_evaluation: string;
-    missing_triage_fields: string[];
+  mitre_tactics?: string[];
+  mitre_techniques?: MitreTechnique[];
+  evasion_blindspots?: string[];
+  triage_questions?: string[];
+  containment_steps?: string[];
+  escalation_criteria?: string[];
+  detection_review?: {
+    false_positive_sources?: string[];
+    evasion_blindspots?: string[];
+    time_window_evaluation?: string;
+    missing_triage_fields?: string[];
   };
-  analyst_triage_guide: {
-    triage_priority: string;
-    initial_questions: string[];
-    containment_steps: string[];
-    escalation_criteria: string[];
+  analyst_triage_guide?: {
+    triage_priority?: string;
+    initial_questions?: string[];
+    containment_steps?: string[];
+    escalation_criteria?: string[];
   };
-  rule_naming_suggestions: string[];
+  rule_naming_suggestions?: string[];
+  [key: string]: any;
 }
 
 export interface MdeCoverageInput {
