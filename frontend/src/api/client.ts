@@ -75,6 +75,28 @@ export interface ValidationBundle {
   overall_coverage_pct: number;
 }
 
+export interface TuningRecommendation {
+  original_threshold: number;
+  suggested_threshold: number;
+  tuning_rationale: string;
+}
+
+export interface NoiseDiagnostics {
+  noise_source: string;
+  affected_entities: string[];
+  mitigation_steps: string[];
+}
+
+export interface TelemetryTuneResponse {
+  original_threshold: number;
+  suggested_threshold: number;
+  tuning_rationale: string;
+  noise_diagnostics?: NoiseDiagnostics | null;
+  tuned_kql?: string | null;
+}
+
+export type TuneResponse = TelemetryTuneResponse;
+
 export interface TranslateDirectResponse {
   success: boolean;
   parsed_rule: ParsedArcSightRule;
@@ -82,6 +104,7 @@ export interface TranslateDirectResponse {
   spl_query: string;
   validation: ValidationBundle;
   raw_llm_output: string;
+  tuning_recommendation?: TuningRecommendation;
   deep_mode?: boolean;
   deep_mode_passed?: boolean;
   deep_mode_attempts?: number;
@@ -102,6 +125,7 @@ export interface ThreatAnalysis {
   triage_questions?: string[];
   containment_steps?: string[];
   escalation_criteria?: string[];
+  tuning_recommendation?: TuningRecommendation;
   detection_review?: {
     false_positive_sources?: string[];
     evasion_blindspots?: string[];
