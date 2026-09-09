@@ -71,6 +71,7 @@ class ParsedArcSightRule:
     required_terms: List[str] = field(default_factory=list)
     exclusion_terms: List[str] = field(default_factory=list)
     referenced_fields: List[str] = field(default_factory=list)
+    active_lists: List[Dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -87,7 +88,11 @@ class ParsedArcSightRule:
             "required_terms": self.required_terms,
             "exclusion_terms": self.exclusion_terms,
             "referenced_fields": self.referenced_fields,
+            "active_lists": self.active_lists,
         }
+
+
+ParsedRule = ParsedArcSightRule
 
 
 def map_priority_to_severity(priority: int) -> str:
@@ -437,6 +442,57 @@ def parse_condition_clauses(condition_text: str) -> Tuple[List[ConditionClause],
     return clauses, required_terms, exclusion_terms, referenced_fields
 
 
+def extract_active_lists(condition_text: str) -> List[Dict[str, str]]:
+    """
+    Extracts ArcSight ActiveList lookups from condition logic.
+    Identifies InActiveList operations and extracts:
+    - field: evaluated event field (e.g. destinationAddress, sourceUserName)
+    - name: targeted ActiveList name (e.g. Malicious IPs, Terminated Users)
+    Handles variations in whitespace and quote types (single or double).
+    """
+    active_lists: List[Dict[str, str]] = []
+    if not condition_text:
+        return active_lists
+
+    # Pattern 1: Standard function call InActiveList(field, "list_name") or InActiveList(field, 'list_name')
+    pattern_standard = re.compile(
+        r'InActiveList\s*\(\s*([a-zA-Z0-9_.-]+)\s*,\s*["\']([^"\']+)["\']\s*\)',
+        re.IGNORECASE,
+    )
+    for m in pattern_standard.finditer(condition_text):
+        field_name = m.group(1).strip()
+        list_name = m.group(2).strip()
+        lookup = {"field": field_name, "name": list_name}
+        if lookup not in active_lists:
+            active_lists.append(lookup)
+
+    # Pattern 2: Inverted arguments InActiveList("list_name", field)
+    pattern_inverted = re.compile(
+        r'InActiveList\s*\(\s*["\']([^"\']+)["\']\s*,\s*([a-zA-Z0-9_.-]+)\s*\)',
+        re.IGNORECASE,
+    )
+    for m in pattern_inverted.finditer(condition_text):
+        list_name = m.group(1).strip()
+        field_name = m.group(2).strip()
+        lookup = {"field": field_name, "name": list_name}
+        if lookup not in active_lists:
+            active_lists.append(lookup)
+
+    # Pattern 3: Infix syntax: field InActiveList "list_name"
+    pattern_infix = re.compile(
+        r'\b([a-zA-Z0-9_.-]+)\s+InActiveList\s+["\']([^"\']+)["\']',
+        re.IGNORECASE,
+    )
+    for m in pattern_infix.finditer(condition_text):
+        field_name = m.group(1).strip()
+        list_name = m.group(2).strip()
+        lookup = {"field": field_name, "name": list_name}
+        if lookup not in active_lists:
+            active_lists.append(lookup)
+
+    return active_lists
+
+
 def parse_arcsight_rule(raw_text: str) -> ParsedArcSightRule:
     """
     Main entry point for deterministic extraction of ArcSight ESM rules.
@@ -451,6 +507,13 @@ def parse_arcsight_rule(raw_text: str) -> ParsedArcSightRule:
     raw_condition = extract_raw_condition(raw_text)
 
     clauses, req_terms, excl_terms, ref_fields = parse_condition_clauses(raw_condition)
+    active_lists = extract_active_lists(raw_condition) or extract_active_lists(raw_text)
+
+    # Ensure fields evaluated by ActiveLists are registered in referenced_fields
+    for al in active_lists:
+        al_field = al.get("field")
+        if al_field and al_field not in ref_fields:
+            ref_fields.append(al_field)
 
     return ParsedArcSightRule(
         rule_name=rule_name,
@@ -466,5 +529,6 @@ def parse_arcsight_rule(raw_text: str) -> ParsedArcSightRule:
         required_terms=req_terms,
         exclusion_terms=excl_terms,
         referenced_fields=ref_fields,
+        active_lists=active_lists,
     )
 

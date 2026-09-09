@@ -131,7 +131,114 @@ class TestArcSightParser(unittest.TestCase):
         self.assertNotIn("standard_search", parsed.exclusion_terms)
 
 
+class TestArcSightActiveList(unittest.TestCase):
+    """
+    Test suite for ArcSight ActiveList extraction:
+    1. Detect XML <Conditions> containing InActiveList operations.
+    2. Extract ActiveList name (e.g., 'Malicious IPs', 'Terminated Users')
+       and evaluated event field (e.g., 'destinationAddress', 'sourceUserName').
+    3. Store extracted lookups in active_lists: List[Dict] on returned ParsedRule object.
+    """
+
+    def test_single_active_list_extraction(self):
+        """Extract a single InActiveList lookup from XML Conditions."""
+        sample_rule = """
+        <Rule>
+          <Name>Malicious Destination Communication</Name>
+          <Priority>8</Priority>
+          <Conditions>
+            (InActiveList(destinationAddress, "Malicious IPs"))
+          </Conditions>
+          <Actions>
+            SetEventField(name, "Malicious Destination Communication")
+          </Actions>
+        </Rule>
+        """
+        parsed = parse_arcsight_rule(sample_rule)
+        self.assertTrue(hasattr(parsed, "active_lists"), "Parsed rule must have active_lists attribute")
+        self.assertEqual(len(parsed.active_lists), 1)
+        lookup = parsed.active_lists[0]
+        self.assertEqual(lookup["name"], "Malicious IPs")
+        self.assertEqual(lookup["field"], "destinationAddress")
+
+    def test_multiple_active_list_lookups(self):
+        """Extract multiple InActiveList lookups from compound XML Conditions."""
+        sample_rule = """
+        <Rule>
+          <Name>Suspicious User and Destination</Name>
+          <Priority>7</Priority>
+          <Conditions>
+            (InActiveList(destinationAddress, "Malicious IPs") And InActiveList(sourceUserName, "Terminated Users"))
+          </Conditions>
+        </Rule>
+        """
+        parsed = parse_arcsight_rule(sample_rule)
+        self.assertTrue(hasattr(parsed, "active_lists"), "Parsed rule must have active_lists attribute")
+        self.assertEqual(len(parsed.active_lists), 2)
+
+        # Check first lookup
+        self.assertEqual(parsed.active_lists[0]["name"], "Malicious IPs")
+        self.assertEqual(parsed.active_lists[0]["field"], "destinationAddress")
+
+        # Check second lookup
+        self.assertEqual(parsed.active_lists[1]["name"], "Terminated Users")
+        self.assertEqual(parsed.active_lists[1]["field"], "sourceUserName")
+
+    def test_active_list_with_mixed_clauses(self):
+        """Extract ActiveList lookups when mixed with regular boolean condition clauses."""
+        sample_rule = """
+        <Rule>
+          <Name>ActiveList Mixed With Standard Clauses</Name>
+          <Priority>7</Priority>
+          <Conditions>
+            (attackerServiceName EQ "cmd.exe" And InActiveList(destinationAddress, "Malicious IPs") And destinationPort NE "80")
+          </Conditions>
+        </Rule>
+        """
+        parsed = parse_arcsight_rule(sample_rule)
+        self.assertTrue(hasattr(parsed, "active_lists"), "Parsed rule must have active_lists attribute")
+        self.assertEqual(len(parsed.active_lists), 1)
+        self.assertEqual(parsed.active_lists[0]["name"], "Malicious IPs")
+        self.assertEqual(parsed.active_lists[0]["field"], "destinationAddress")
+        # Standard required terms and exclusions must still be extracted
+        self.assertIn("cmd.exe", parsed.required_terms)
+        self.assertIn("80", parsed.exclusion_terms)
+
+    def test_active_list_absent_returns_empty_list(self):
+        """Rules without ActiveList operations must return an empty list for active_lists."""
+        sample_rule = """
+        <Rule>
+          <Name>Standard Rule Without ActiveList</Name>
+          <Priority>5</Priority>
+          <Conditions>
+            (attackerServiceName EQ "powershell.exe" And destinationPort EQ "443")
+          </Conditions>
+        </Rule>
+        """
+        parsed = parse_arcsight_rule(sample_rule)
+        self.assertTrue(hasattr(parsed, "active_lists"), "Parsed rule must have active_lists attribute")
+        self.assertEqual(parsed.active_lists, [])
+
+    def test_active_list_syntax_variations(self):
+        """Extract ActiveList lookups with whitespace or single-quote formatting variations."""
+        sample_rule = """
+        <Rule>
+          <Name>Whitespace and Single Quote ActiveList</Name>
+          <Priority>6</Priority>
+          <Conditions>
+            ( InActiveList ( destinationAddress , 'Malicious IPs' ) )
+          </Conditions>
+        </Rule>
+        """
+        parsed = parse_arcsight_rule(sample_rule)
+        self.assertTrue(hasattr(parsed, "active_lists"), "Parsed rule must have active_lists attribute")
+        self.assertEqual(len(parsed.active_lists), 1)
+        self.assertEqual(parsed.active_lists[0]["name"], "Malicious IPs")
+        self.assertEqual(parsed.active_lists[0]["field"], "destinationAddress")
+
+
 if __name__ == "__main__":
     unittest.main()
+
 
 
