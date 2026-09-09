@@ -1,14 +1,16 @@
 import React, { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { fetchHealth, LLMConfig } from '../api/client';
-import { Shield, Server, Cpu, Database, RefreshCw, History, SlidersHorizontal, Settings } from 'lucide-react';
+import { Shield, Server, Cpu, Database, RefreshCw, History, SlidersHorizontal, Settings, Activity } from 'lucide-react';
+
+export type TabType = 'translate' | 'tuning' | 'settings';
 
 interface HeaderHealthBarProps {
   llmConfig: LLMConfig;
   onOpenSettings: () => void;
   onOpenAuditLog: () => void;
-  activeTab?: 'translate' | 'settings';
-  onSelectTab?: (tab: 'translate' | 'settings') => void;
+  activeTab?: TabType;
+  onSelectTab?: (tab: TabType) => void;
 }
 
 export const HeaderHealthBar: React.FC<HeaderHealthBarProps> = ({
@@ -223,19 +225,47 @@ export const HeaderHealthBar: React.FC<HeaderHealthBarProps> = ({
             <span className="hidden sm:inline">Model Engine</span>
           </button>
 
-          {/* Sentinel Settings Gear Button */}
-          <button
-            onClick={() => onSelectTab?.(activeTab === 'settings' ? 'translate' : 'settings')}
-            className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border text-xs font-medium transition-all duration-150 cursor-pointer ${
-              activeTab === 'settings'
-                ? 'border-cyan-400/40 bg-cyan-400/[0.12] text-cyan-200 shadow-[0_0_12px_rgba(6,182,212,0.15)]'
-                : 'border-cyan-400/20 bg-cyan-400/[0.05] hover:bg-cyan-400/[0.1] text-cyan-300 hover:text-cyan-200'
-            }`}
-            title={activeTab === 'settings' ? 'Return to Detection Workspace' : 'Configure Microsoft Sentinel'}
-          >
-            <Settings className="w-3.5 h-3.5 stroke-[1.75]" />
-            <span>{activeTab === 'settings' ? 'Workspace' : 'Sentinel Settings'}</span>
-          </button>
+          {/* Main Navigation Tabs */}
+          <nav className="flex items-center gap-1 p-1 rounded-xl bg-white/[0.03] border border-white/[0.08]" aria-label="Main Navigation">
+            <button
+              type="button"
+              onClick={() => onSelectTab?.('translate')}
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-150 cursor-pointer ${
+                activeTab === 'translate'
+                  ? 'border border-cyan-400/40 bg-cyan-400/[0.12] text-cyan-200 shadow-[0_0_12px_rgba(6,182,212,0.15)]'
+                  : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/[0.04]'
+              }`}
+            >
+              <Shield className="w-3.5 h-3.5 stroke-[1.75]" />
+              <span>Translate</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => onSelectTab?.('tuning')}
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-150 cursor-pointer ${
+                activeTab === 'tuning'
+                  ? 'border border-cyan-400/40 bg-cyan-400/[0.12] text-cyan-200 shadow-[0_0_12px_rgba(6,182,212,0.15)]'
+                  : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/[0.04]'
+              }`}
+            >
+              <Activity className="w-3.5 h-3.5 stroke-[1.75]" />
+              <span>Live Tuning</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => onSelectTab?.('settings')}
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-150 cursor-pointer ${
+                activeTab === 'settings'
+                  ? 'border border-cyan-400/40 bg-cyan-400/[0.12] text-cyan-200 shadow-[0_0_12px_rgba(6,182,212,0.15)]'
+                  : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/[0.04]'
+              }`}
+            >
+              <Settings className="w-3.5 h-3.5 stroke-[1.75]" />
+              <span>Settings</span>
+            </button>
+          </nav>
         </div>
       </div>
     </header>

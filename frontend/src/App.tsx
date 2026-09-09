@@ -1,13 +1,14 @@
 import React, { useState } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { LLMConfig } from './api/client';
-import { HeaderHealthBar } from './components/HeaderHealthBar';
+import { HeaderHealthBar, TabType } from './components/HeaderHealthBar';
 import { DirectTranslateView } from './components/DirectTranslateView';
 import { IntegrationSettings } from './components/IntegrationSettings';
+import { StandaloneTuningView } from './components/StandaloneTuningView';
 import { ModelSelector } from './components/ModelSelector';
 import { AuditLogModal } from './components/AuditLogModal';
 import { LoginGate } from './components/LoginGate';
-import { ArrowLeft, ShieldCheck } from 'lucide-react';
+import { ArrowLeft, ShieldCheck, Activity } from 'lucide-react';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -26,7 +27,7 @@ export const AppContent: React.FC = () => {
     custom_base_url: 'http://localhost:1234/v1',
   });
 
-  const [activeTab, setActiveTab] = useState<'translate' | 'settings'>('translate');
+  const [activeTab, setActiveTab] = useState<TabType>('translate');
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isAuditLogOpen, setIsAuditLogOpen] = useState(false);
 
@@ -47,9 +48,32 @@ export const AppContent: React.FC = () => {
 
       {/* Main Workspace */}
       <main className="flex-1 w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 md:py-10">
-        {activeTab === 'translate' ? (
+        {activeTab === 'translate' && (
           <DirectTranslateView llmConfig={llmConfig} />
-        ) : (
+        )}
+
+        {activeTab === 'tuning' && (
+          <div className="space-y-6 animate-fadeIn">
+            {/* Navigation / Return Breadcrumb */}
+            <div className="flex items-center justify-between">
+              <button
+                onClick={() => setActiveTab('translate')}
+                className="flex items-center gap-2 text-xs font-medium text-zinc-400 hover:text-cyan-300 transition-colors cursor-pointer group"
+              >
+                <ArrowLeft className="w-3.5 h-3.5 group-hover:-translate-x-0.5 transition-transform" />
+                <span>Return to Detection Workspace</span>
+              </button>
+              <div className="flex items-center gap-2 text-xs text-zinc-500">
+                <Activity className="w-3.5 h-3.5 text-cyan-400" />
+                <span>Telemetry Diagnostics</span>
+              </div>
+            </div>
+
+            <StandaloneTuningView />
+          </div>
+        )}
+
+        {activeTab === 'settings' && (
           <div className="space-y-6 animate-fadeIn">
             {/* Navigation / Return Breadcrumb */}
             <div className="flex items-center justify-between">
