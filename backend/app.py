@@ -74,6 +74,7 @@ from backend.threat_analysis_prompts import (
 )
 from backend.splunk_client import SplunkTestClient
 from backend.sentinel_client import SentinelClient
+from backend.telemetry_tuner import calculate_dynamic_threshold
 from backend.audit_store import audit_store
 from backend.git_exporter import generate_git_ready_text, save_git_ready_runbook
 
@@ -499,6 +500,22 @@ async def _execute_translate_direct(payload: TranslateDirectRequest) -> Dict[str
         else {"rule_name": getattr(parsed_rule, "rule_name", "Unknown Rule")}
     )
 
+    # Step 5: Sentinel Telemetry Baseline & Dynamic Threshold
+    try:
+        kql_telemetry = sentinel_client.execute_kql_query(query_text=kql_query, timespan_days=7)
+        baseline_count = kql_telemetry.get("row_count", 0) if isinstance(kql_telemetry, dict) else 0
+    except Exception:
+        baseline_count = 0
+
+    static_threshold = 0
+    if hasattr(parsed_rule, "frequency") and parsed_rule.frequency:
+        static_threshold = getattr(parsed_rule.frequency, "event_count", 0) or 0
+
+    tuning_rec = calculate_dynamic_threshold(
+        baseline_event_count=baseline_count,
+        static_rule_threshold=static_threshold,
+    )
+
     final_payload = {
         "success": True,
         "parsed_rule": parsed_rule_dict,
@@ -506,6 +523,7 @@ async def _execute_translate_direct(payload: TranslateDirectRequest) -> Dict[str
         "spl_query": spl_query,
         "validation": val_bundle,
         "raw_llm_output": llm_output,
+        "tuning_recommendation": tuning_rec,
         "deep_mode": deep_mode,
         "deep_mode_passed": deep_mode_passed,
         "deep_mode_attempts": attempt,
@@ -753,6 +771,24 @@ async def _stream_translate_direct(payload: TranslateDirectRequest):
             else {"rule_name": getattr(parsed_rule, "rule_name", "Unknown Rule")}
         )
 
+        yield f"data: {json.dumps({'status': 'Querying Sentinel historical baseline & calculating dynamic threshold...'})}\n\n"
+
+        # Step 5: Sentinel Telemetry Baseline & Dynamic Threshold
+        try:
+            kql_telemetry = sentinel_client.execute_kql_query(query_text=kql_query, timespan_days=7)
+            baseline_count = kql_telemetry.get("row_count", 0) if isinstance(kql_telemetry, dict) else 0
+        except Exception:
+            baseline_count = 0
+
+        static_threshold = 0
+        if hasattr(parsed_rule, "frequency") and parsed_rule.frequency:
+            static_threshold = getattr(parsed_rule.frequency, "event_count", 0) or 0
+
+        tuning_rec = calculate_dynamic_threshold(
+            baseline_event_count=baseline_count,
+            static_rule_threshold=static_threshold,
+        )
+
         final_payload = {
             "success": True,
             "parsed_rule": parsed_rule_dict,
@@ -760,6 +796,7 @@ async def _stream_translate_direct(payload: TranslateDirectRequest):
             "spl_query": spl_query,
             "validation": val_bundle,
             "raw_llm_output": llm_output,
+            "tuning_recommendation": tuning_rec,
             "deep_mode": True,
             "deep_mode_passed": deep_mode_passed,
             "deep_mode_attempts": attempt,
