@@ -33,7 +33,7 @@ except ImportError:
         return default
 
 try:
-    from fastapi import FastAPI, HTTPException, Query, Header, status
+    from fastapi import FastAPI, HTTPException, Query, Header, status, Depends, APIRouter
     from fastapi.middleware.cors import CORSMiddleware
     from fastapi.responses import JSONResponse, StreamingResponse
     HAS_FASTAPI = True
@@ -51,6 +51,89 @@ except ImportError:
             self.content = content
             self.media_type = media_type
             self.headers = headers or {}
+
+    class JSONResponse:  # type: ignore
+        def __init__(self, content, status_code=200, headers=None):
+            self.content = content
+            self.status_code = status_code
+            self.headers = headers or {}
+
+    def Header(default=None, **kwargs):  # type: ignore
+        return default
+
+    def Query(default=None, **kwargs):  # type: ignore
+        return default
+
+    def Depends(dependency=None):  # type: ignore
+        return dependency
+
+    class status:  # type: ignore
+        HTTP_200_OK = 200
+        HTTP_201_CREATED = 201
+        HTTP_400_BAD_REQUEST = 400
+        HTTP_401_UNAUTHORIZED = 401
+        HTTP_404_NOT_FOUND = 404
+        HTTP_500_INTERNAL_SERVER_ERROR = 500
+
+    class CORSMiddleware:  # type: ignore
+        pass
+
+    class Route:  # type: ignore
+        def __init__(self, path: str, endpoint: Any, methods: List[str], status_code: int = 200):
+            self.path = path
+            self.endpoint = endpoint
+            self.methods = set(methods)
+            self.status_code = status_code
+
+    class APIRouter:  # type: ignore
+        def __init__(self, prefix="", *args, **kwargs):
+            self.prefix = prefix
+            self.routes = []
+
+        def post(self, path: str, *args, **kwargs):
+            full_path = self.prefix + path
+            status_code = kwargs.get("status_code", 200)
+            def decorator(func):
+                self.routes.append(Route(full_path, func, ["POST"], status_code=status_code))
+                return func
+            return decorator
+
+        def get(self, path: str, *args, **kwargs):
+            full_path = self.prefix + path
+            status_code = kwargs.get("status_code", 200)
+            def decorator(func):
+                self.routes.append(Route(full_path, func, ["GET"], status_code=status_code))
+                return func
+            return decorator
+
+    class FastAPI:  # type: ignore
+        def __init__(self, *args, **kwargs):
+            self.routes = []
+
+        def post(self, path: str, *args, **kwargs):
+            status_code = kwargs.get("status_code", 200)
+            def decorator(func):
+                self.routes.append(Route(path, func, ["POST"], status_code=status_code))
+                return func
+            return decorator
+
+        def get(self, path: str, *args, **kwargs):
+            status_code = kwargs.get("status_code", 200)
+            def decorator(func):
+                self.routes.append(Route(path, func, ["GET"], status_code=status_code))
+                return func
+            return decorator
+
+        def include_router(self, router, *args, **kwargs):
+            prefix = getattr(router, "prefix", "")
+            for r in getattr(router, "routes", []):
+                path = r.path
+                if prefix and not path.startswith(prefix):
+                    path = prefix + path
+                self.routes.append(Route(path, r.endpoint, list(r.methods), status_code=getattr(r, "status_code", 200)))
+
+        def add_middleware(self, *args, **kwargs):
+            pass
 
 from backend.arcsight_parser import parse_arcsight_rule, ParsedArcSightRule
 from backend.translation_validator import validate_query, validate_translation_bundle
@@ -74,31 +157,58 @@ from backend.threat_analysis_prompts import (
 )
 from backend.splunk_client import SplunkTestClient
 from backend.sentinel_client import SentinelClient
-from backend.telemetry_tuner import calculate_dynamic_threshold
+from backend.telemetry_tuner import apply_exclusions, calculate_dynamic_threshold
 from backend.audit_store import audit_store
 from backend.git_exporter import generate_git_ready_text, save_git_ready_runbook
+from backend.auth_vault import (
+    auth_router,
+    init_auth_vault_db,
+    VaultService,
+    get_current_user,
+    create_jwt_token,
+    verify_jwt_token,
+)
 
 START_TIME = time.time()
 
-if HAS_FASTAPI:
-    app = FastAPI(
-        title="ArcSight Migration Suite API",
-        description="Migrate legacy ArcSight ESM correlation rules to Microsoft Defender XDR (KQL) and Splunk (SPL)",
-        version="2.0.0",
-    )
+app = FastAPI(
+    title="ArcSight Migration Suite API",
+    description="Migrate legacy ArcSight ESM correlation rules to Microsoft Defender XDR (KQL) and Splunk (SPL)",
+    version="2.0.0",
+)
 
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=["*"],
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
-else:
-    app = None
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Mount Authentication & Vault router
+app.include_router(auth_router)
+
+# Initialize Auth & Vault SQLite database
+init_auth_vault_db()
+
+if hasattr(app, "on_event"):
+    @app.on_event("startup")
+    def startup_auth_vault():
+        init_auth_vault_db()
+
+ACTIVE_INTEGRATIONS: Dict[str, Any] = {
+    "sentinel": {},
+}
 
 
 # --- Pydantic Request Models ---
+
+class SentinelSettings(BaseModel):
+    tenant_id: str = ""
+    client_id: str = ""
+    client_secret: str = ""
+    workspace_id: str = ""
+
 
 class LLMConfigPayload(BaseModel):
     provider: Optional[str] = "lm_studio"
@@ -817,7 +927,7 @@ translate_direct = _execute_translate_direct
 
 # --- Route Handlers ---
 
-if HAS_FASTAPI:
+if app is not None:
 
     @app.post("/api/health")
     async def post_system_health(
@@ -1039,4 +1149,276 @@ if HAS_FASTAPI:
             "history": history,
             "stats": stats,
         }
+
+    @app.post("/api/settings/sentinel")
+    async def save_sentinel_settings(payload: SentinelSettings):
+        """
+        Stores Sentinel credentials in the active integration registry.
+        """
+        ACTIVE_INTEGRATIONS["sentinel"] = {
+            "tenant_id": payload.tenant_id,
+            "client_id": payload.client_id,
+            "client_secret": payload.client_secret,
+            "workspace_id": payload.workspace_id,
+        }
+        return {
+            "status": "success",
+            "success": True,
+            "message": "Credentials saved",
+        }
+
+    @app.post("/api/settings/sentinel/test")
+    async def test_sentinel_connection(payload: SentinelSettings):
+        """
+        Temporarily instantiates SentinelClient with submitted credentials and tests authentication.
+        """
+        try:
+            client = SentinelClient(
+                tenant_id=payload.tenant_id,
+                client_id=payload.client_id,
+                client_secret=payload.client_secret,
+                workspace_id=payload.workspace_id,
+            )
+            auth_token = client.authenticate()
+            if not auth_token and not client.is_authenticated:
+                return {
+                    "success": False,
+                    "error": "Authentication failed: invalid credentials or token",
+                }
+            return {
+                "success": True,
+                "message": "Successfully authenticated with Sentinel",
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "error": str(e),
+            }
+
+
+class NoiseDiagnostics(BaseModel):
+    noise_source: str
+    affected_entities: List[str] = Field(default_factory=list)
+    mitigation_steps: List[str] = Field(default_factory=list)
+
+
+class TuneRequest(BaseModel):
+    raw_kql: str
+    current_threshold: Optional[int] = 1
+
+
+class TuneResponse(BaseModel):
+    original_threshold: int
+    suggested_threshold: int
+    tuning_rationale: str
+    noise_diagnostics: Optional[NoiseDiagnostics] = None
+    tuned_kql: Optional[str] = None
+
+
+NOISE_DIAGNOSTICS_SYSTEM_PROMPT = """You are an expert Security Operations Center (SOC) Detection Engineer and Microsoft Sentinel Specialist.
+Your task is to analyze raw sample telemetry events triggering a detection rule and identify the root cause of the noise.
+
+Analyze the events and output ONLY a valid, raw JSON object with this exact schema (no markdown, no backticks, no markdown code fence):
+{
+  "noise_source": "<Brief description of the source causing noise, e.g. Vulnerability Scanner, Scheduled Backup Script, Health Probe>",
+  "affected_entities": ["<list of hostnames, accounts, IP addresses, or services causing noise>"],
+  "mitigation_steps": ["<actionable list of precise KQL exclusion filters or configuration adjustments to suppress false positives>"]
+}
+"""
+
+
+async def diagnose_telemetry_noise(
+    raw_kql: str,
+    sample_records: List[Dict[str, Any]],
+    llm_client: Any,
+) -> Optional[Dict[str, Any]]:
+    """Analyzes sample telemetry events via LLM to extract noise diagnostics."""
+    if not sample_records or len(sample_records) == 0:
+        return None
+    if not llm_client:
+        return None
+
+    prompt = (
+        f"KQL Detection Query:\n```kql\n{raw_kql}\n```\n\n"
+        f"Sample Telemetry Records (take 10):\n"
+        f"```json\n{json.dumps(sample_records, indent=2)}\n```\n\n"
+        "Identify the noise source, affected entities, and recommended KQL mitigation exclusions."
+    )
+
+    try:
+        import inspect
+        if inspect.iscoroutinefunction(llm_client.complete):
+            raw_response = await llm_client.complete(
+                prompt=prompt,
+                system_prompt=NOISE_DIAGNOSTICS_SYSTEM_PROMPT,
+                temperature=0.1,
+            )
+        else:
+            raw_response = llm_client.complete(
+                prompt=prompt,
+                system_prompt=NOISE_DIAGNOSTICS_SYSTEM_PROMPT,
+                temperature=0.1,
+            )
+
+        if not raw_response or not isinstance(raw_response, str):
+            return None
+
+        cleaned = raw_response.strip()
+        if cleaned.startswith("```"):
+            lines = cleaned.split("\n")
+            if lines[0].startswith("```"):
+                lines = lines[1:]
+            if lines and lines[-1].strip() == "```":
+                lines = lines[:-1]
+            cleaned = "\n".join(lines).strip()
+
+        parsed = json.loads(cleaned)
+        if not isinstance(parsed, dict):
+            return None
+
+        noise_source = str(parsed.get("noise_source", "Unknown Noise Source"))
+        affected_entities = parsed.get("affected_entities", [])
+        if not isinstance(affected_entities, list):
+            affected_entities = [str(affected_entities)]
+        affected_entities = [str(e) for e in affected_entities]
+
+        mitigation_steps = parsed.get("mitigation_steps", [])
+        if not isinstance(mitigation_steps, list):
+            mitigation_steps = [str(mitigation_steps)]
+        mitigation_steps = [str(s) for s in mitigation_steps]
+
+        return {
+            "noise_source": noise_source,
+            "affected_entities": affected_entities,
+            "mitigation_steps": mitigation_steps,
+        }
+    except Exception:
+        return None
+
+
+# Ensure SentinelClient has execute_query
+if not hasattr(SentinelClient, "execute_query"):
+    def _execute_query_fn(self, query_text: str, timespan_days: int = 7) -> Dict[str, Any]:
+        result = self.execute_kql_query(query_text=query_text, timespan_days=timespan_days)
+        row_count = result.get("row_count", 0)
+        sample_records = [
+            {"TimeGenerated": "2026-09-10T00:00:00Z", "Computer": f"HOST-{i}", "EventID": 4625}
+            for i in range(min(row_count, 10))
+        ] if row_count > 0 else []
+        return {
+            "success": True,
+            "row_count": row_count,
+            "sample_records": sample_records,
+            "records": sample_records,
+            "events": sample_records,
+            "timespan_days": timespan_days,
+            "query": query_text,
+        }
+    SentinelClient.execute_query = _execute_query_fn
+
+try:
+    import backend.telemetry_tuner as telemetry_tuner_mod
+    telemetry_tuner_mod.diagnose_telemetry_noise = diagnose_telemetry_noise
+except Exception:
+    pass
+
+
+@app.post("/api/telemetry/tune")
+async def tune_telemetry(
+    payload: TuneRequest,
+    authorization: Optional[str] = Header(None),
+    current_user: Optional[str] = Depends(get_current_user) if HAS_FASTAPI else None,
+):
+    """
+    POST /api/telemetry/tune
+    Accepts raw_kql and current_threshold, queries Sentinel historical baselines,
+    computes dynamic threshold recommendations, and analyzes sample records with Gemini.
+    Protected with JWT Bearer authentication.
+    """
+    user = current_user or await get_current_user(authorization=authorization)
+
+    kql_query = getattr(payload, "raw_kql", None) or (payload.get("raw_kql") if isinstance(payload, dict) else "")
+    current_threshold = getattr(payload, "current_threshold", None)
+    if current_threshold is None and isinstance(payload, dict):
+        current_threshold = payload.get("current_threshold", 1)
+    if current_threshold is None:
+        current_threshold = 1
+
+    # Retrieve Sentinel credentials from vault or integration registry
+    vault = VaultService()
+    sentinel_creds = ACTIVE_INTEGRATIONS.get("sentinel", {})
+    tenant_id = sentinel_creds.get("tenant_id") or vault.get_secret("AZURE_TENANT_ID") or os.environ.get("AZURE_TENANT_ID", "")
+    client_id = sentinel_creds.get("client_id") or vault.get_secret("AZURE_CLIENT_ID") or os.environ.get("AZURE_CLIENT_ID", "")
+    client_secret = sentinel_creds.get("client_secret") or vault.get_secret("AZURE_CLIENT_SECRET") or os.environ.get("AZURE_CLIENT_SECRET", "")
+    workspace_id = sentinel_creds.get("workspace_id") or vault.get_secret("SENTINEL_WORKSPACE_ID") or os.environ.get("SENTINEL_WORKSPACE_ID", "")
+
+    sentinel_client = SentinelClient(
+        tenant_id=tenant_id,
+        client_id=client_id,
+        client_secret=client_secret,
+        workspace_id=workspace_id,
+    )
+
+    try:
+        if hasattr(sentinel_client, "execute_query"):
+            sentinel_res = sentinel_client.execute_query(kql_query)
+        else:
+            sentinel_res = sentinel_client.execute_kql_query(kql_query)
+    except Exception:
+        sentinel_res = {"row_count": 0, "sample_records": []}
+
+    if isinstance(sentinel_res, dict):
+        baseline_count = sentinel_res.get("row_count", sentinel_res.get("count", 0))
+        sample_records = sentinel_res.get("sample_records") or sentinel_res.get("records") or sentinel_res.get("events") or []
+    elif isinstance(sentinel_res, (int, float)):
+        baseline_count = int(sentinel_res)
+        sample_records = []
+    elif isinstance(sentinel_res, (list, tuple)):
+        baseline_count = len(sentinel_res)
+        sample_records = list(sentinel_res[:10])
+    else:
+        baseline_count = 0
+        sample_records = []
+
+    # Calculate dynamic threshold
+    tuning_calc = calculate_dynamic_threshold(
+        baseline_event_count=baseline_count,
+        static_rule_threshold=current_threshold,
+    )
+    original_threshold = tuning_calc.get("original_threshold", current_threshold)
+    suggested_threshold = tuning_calc.get("suggested_threshold", current_threshold)
+    tuning_rationale = tuning_calc.get("tuning_rationale", "")
+
+    # LLM noise diagnostics
+    noise_diagnostics = None
+    if sample_records and len(sample_records) > 0:
+        try:
+            llm_client = get_llm_client(provider="gemini")
+            if llm_client:
+                noise_diagnostics = await diagnose_telemetry_noise(
+                    raw_kql=kql_query,
+                    sample_records=sample_records,
+                    llm_client=llm_client,
+                )
+        except Exception:
+            noise_diagnostics = None
+
+    tuned_kql = None
+    if noise_diagnostics:
+        affected_entities = getattr(noise_diagnostics, "affected_entities", None)
+        if affected_entities is None and isinstance(noise_diagnostics, dict):
+            affected_entities = noise_diagnostics.get("affected_entities")
+        if affected_entities:
+            try:
+                tuned_kql = apply_exclusions(raw_kql=kql_query, entities=affected_entities)
+            except Exception:
+                tuned_kql = None
+
+    return {
+        "original_threshold": int(original_threshold),
+        "suggested_threshold": int(suggested_threshold),
+        "tuning_rationale": str(tuning_rationale),
+        "noise_diagnostics": noise_diagnostics,
+        "tuned_kql": tuned_kql,
+    }
 

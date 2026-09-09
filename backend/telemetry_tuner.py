@@ -3,7 +3,8 @@ telemetry_tuner.py - Dynamic threshold calculation and telemetry baseline tuning
 """
 
 import math
-from typing import Dict, Any
+import re
+from typing import Dict, Any, List, Optional
 
 
 def calculate_dynamic_threshold(
@@ -42,4 +43,51 @@ def calculate_dynamic_threshold(
         "suggested_threshold": suggested_threshold,
         "tuning_rationale": tuning_rationale,
     }
+
+
+def apply_exclusions(raw_kql: Optional[str], entities: Optional[List[Any]]) -> str:
+    """
+    Injects a negative exclusion block for identified entities into a raw KQL query.
+
+    If entities is empty, None, or raw_kql is empty, returns raw_kql unchanged.
+    Locates the first instance of an aggregate function (| summarize or | count) and injects:
+        | where Object !in ('entity1', 'entity2')
+    immediately before the aggregate. If no aggregate function is found, cleanly appends
+    the exclusion block to the end of the query.
+    """
+    if raw_kql is None:
+        return ""
+    if not isinstance(raw_kql, str) or not raw_kql.strip():
+        return raw_kql
+    if not entities:
+        return raw_kql
+
+    cleaned_entities = [str(e) for e in entities if e is not None and str(e).strip()]
+    if not cleaned_entities:
+        return raw_kql
+
+    formatted_entities = ", ".join(f"'{e}'" for e in cleaned_entities)
+    exclusion_clause = f"| where Object !in ({formatted_entities})"
+
+    # Locate first instance of an aggregate function (| summarize or | count)
+    match = re.search(r"(?i)(\|\s*(?:summarize|count)\b)", raw_kql)
+    if match:
+        idx = match.start()
+        line_start = raw_kql.rfind("\n", 0, idx)
+        if line_start != -1:
+            indent = raw_kql[line_start + 1 : idx]
+            if indent.strip() == "":
+                return f"{raw_kql[:line_start + 1]}{indent}{exclusion_clause}\n{raw_kql[line_start + 1:]}"
+            else:
+                return f"{raw_kql[:idx]}{exclusion_clause}\n{raw_kql[idx:]}"
+        else:
+            if raw_kql[:idx].strip():
+                return f"{raw_kql[:idx]}{exclusion_clause} {raw_kql[idx:]}"
+            else:
+                return f"{exclusion_clause}\n{raw_kql}"
+    else:
+        if "\n" in raw_kql:
+            return f"{raw_kql.rstrip()}\n{exclusion_clause}"
+        else:
+            return f"{raw_kql.rstrip()} {exclusion_clause}"
 
