@@ -2,7 +2,11 @@
 test_direct_pipeline.py - Integration test for direct path translation & git-ready export
 """
 
+import asyncio
 import unittest
+from unittest.mock import patch, MagicMock, AsyncMock
+
+from backend.app import execute_translate_direct, TranslateDirectRequest, LLMConfigPayload
 from backend.arcsight_parser import parse_arcsight_rule
 from backend.direct_translate_prompts import (
     DIRECT_TRANSLATE_SYSTEM_PROMPT,
@@ -45,6 +49,18 @@ index=main (process="*cmd.exe*" OR CommandLine="*adfind.exe*") NOT (user="servic
 | stats count as EventCount by dest, user, _time
 | search EventCount >= 5
 ```
+"""
+
+RULE_WITH_ASIM_FIELDS = """Rule Name: Suspicious Outbound Connection
+Priority: 6
+Matching 1 events in 5 Minutes
+groupByFields: destinationAddress
+
+Conditions:
+(destinationAddress EQ "192.168.1.100" And deviceAction EQ "Blocked")
+
+Actions:
+SetEventField(name, "Suspicious Outbound Connection")
 """
 
 
@@ -168,6 +184,97 @@ class TestDirectPipeline(unittest.TestCase):
         self.assertIn("Strict Directives (SPL Syntax Constraints):", user_prompt)
         self.assertIn(expected_wildcard, user_prompt)
         self.assertIn(expected_time, user_prompt)
+
+    @patch("backend.app.get_llm_client")
+    @patch("backend.app.SentinelClient", create=True)
+    def test_pipeline_instantiates_sentinel_client(self, mock_sentinel_cls, mock_get_llm):
+        """Verify translation pipeline properly instantiates SentinelClient."""
+        mock_llm = MagicMock()
+        mock_llm.complete = AsyncMock(return_value=MOCK_LLM_OUTPUT)
+        mock_get_llm.return_value = mock_llm
+
+        mock_sentinel = MagicMock()
+        mock_sentinel.resolve_field_mapping.return_value = "DstIpAddr"
+        mock_sentinel_cls.return_value = mock_sentinel
+
+        req = TranslateDirectRequest(
+            raw_text=RULE_WITH_ASIM_FIELDS,
+            llm_config=LLMConfigPayload(provider="lm_studio"),
+            deep_mode=False,
+        )
+        asyncio.run(execute_translate_direct(req))
+
+        mock_sentinel_cls.assert_called()
+
+    @patch("backend.app.get_llm_client")
+    @patch("backend.app.SentinelClient", create=True)
+    def test_pipeline_resolves_field_mappings_for_rule_fields(self, mock_sentinel_cls, mock_get_llm):
+        """Verify translation pipeline calls resolve_field_mapping for key ArcSight fields."""
+        mock_llm = MagicMock()
+        mock_llm.complete = AsyncMock(return_value=MOCK_LLM_OUTPUT)
+        mock_get_llm.return_value = mock_llm
+
+        mock_sentinel = MagicMock()
+        mock_sentinel.resolve_field_mapping.side_effect = lambda f, **kw: {
+            "destinationAddress": "DstIpAddr",
+            "deviceAction": "EventResult",
+        }.get(f, f)
+        mock_sentinel_cls.return_value = mock_sentinel
+
+        req = TranslateDirectRequest(
+            raw_text=RULE_WITH_ASIM_FIELDS,
+            llm_config=LLMConfigPayload(provider="lm_studio"),
+            deep_mode=False,
+        )
+        asyncio.run(execute_translate_direct(req))
+
+        mock_sentinel.resolve_field_mapping.assert_any_call("destinationAddress")
+        mock_sentinel.resolve_field_mapping.assert_any_call("deviceAction")
+
+    @patch("backend.app.get_llm_client")
+    @patch("backend.app.SentinelClient", create=True)
+    def test_pipeline_injects_asim_schema_mappings_into_llm_prompt(self, mock_sentinel_cls, mock_get_llm):
+        """Verify returned ASIM schema mappings are explicitly injected into the LLM context prompt."""
+        mock_llm = MagicMock()
+        mock_llm.complete = AsyncMock(return_value=MOCK_LLM_OUTPUT)
+        mock_get_llm.return_value = mock_llm
+
+        mock_sentinel = MagicMock()
+        mock_sentinel.resolve_field_mapping.side_effect = lambda f, **kw: {
+            "destinationAddress": "DstIpAddr",
+            "deviceAction": "EventResult",
+        }.get(f, f)
+        mock_sentinel_cls.return_value = mock_sentinel
+
+        req = TranslateDirectRequest(
+            raw_text=RULE_WITH_ASIM_FIELDS,
+            llm_config=LLMConfigPayload(provider="lm_studio"),
+            deep_mode=False,
+        )
+        asyncio.run(execute_translate_direct(req))
+
+        self.assertTrue(mock_llm.complete.called)
+        call_kwargs = mock_llm.complete.call_args[1] if mock_llm.complete.call_args[1] else {}
+        prompt_passed = call_kwargs.get("prompt", "")
+        if not prompt_passed and mock_llm.complete.call_args[0]:
+            prompt_passed = mock_llm.complete.call_args[0][0]
+
+        self.assertIn("DstIpAddr", prompt_passed)
+        self.assertIn("EventResult", prompt_passed)
+
+    def test_direct_translate_prompts_asim_schema_injection(self):
+        """Verify build_direct_translate_prompt formats ASIM schema mappings when provided."""
+        user_prompt = build_direct_translate_prompt(
+            rule_name="Test ASIM Rule",
+            severity="Medium",
+            raw_condition='destinationAddress EQ "192.168.1.1"',
+            frequency_str="Matching 1 events in 5 Minutes",
+            group_by=["destinationAddress"],
+            asim_mappings={"destinationAddress": "DstIpAddr", "deviceAction": "EventResult"},
+        )
+        self.assertIn("ASIM Schema Field Mappings:", user_prompt)
+        self.assertIn("destinationAddress -> DstIpAddr", user_prompt)
+        self.assertIn("deviceAction -> EventResult", user_prompt)
 
 
 if __name__ == "__main__":

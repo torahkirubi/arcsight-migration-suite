@@ -92,6 +92,7 @@ def build_direct_translate_prompt(
     mitre_tactic: str = None,
     required_terms: list = None,
     exclusion_terms: list = None,
+    asim_mappings: dict = None,
 ) -> str:
     """Build the user prompt for the direct translation pipeline."""
     exclusion_section = ""
@@ -99,6 +100,16 @@ def build_direct_translate_prompt(
         exclusion_section = f"""
 ### Identified Exclusion Filters (CRITICAL - MUST BE EXPLICITLY NEGATED):
 {', '.join(exclusion_terms)}
+"""
+
+    asim_section = ""
+    if asim_mappings:
+        formatted_mappings = "\n".join(
+            f"- {src} -> {dst}" for src, dst in asim_mappings.items()
+        )
+        asim_section = f"""
+### ASIM Schema Field Mappings:
+{formatted_mappings}
 """
 
     return f"""Translate the following ArcSight ESM Rule to both KQL and SPL.
@@ -118,7 +129,7 @@ Group By: {', '.join(group_by) if group_by else 'None'}
 
 ### Raw ArcSight Condition Logic:
 {raw_condition}
-{exclusion_section}
+{exclusion_section}{asim_section}
 ### Strict Directives (Logical Operator Fidelity):
 - You MUST preserve all negation and exclusion logic. If the ArcSight rule excludes a string, IP, or condition, the resulting KQL and SPL MUST use explicit negation (e.g., NOT, !=, not in()). Do not invert exclusion logic into inclusive matches.
 - Ensure multi-term exclusions are properly grouped and negated according to the target language's order of operations.

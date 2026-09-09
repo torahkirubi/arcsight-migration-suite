@@ -73,6 +73,7 @@ from backend.threat_analysis_prompts import (
     parse_threat_analysis_response,
 )
 from backend.splunk_client import SplunkTestClient
+from backend.sentinel_client import SentinelClient
 from backend.audit_store import audit_store
 from backend.git_exporter import generate_git_ready_text, save_git_ready_runbook
 
@@ -270,6 +271,19 @@ async def _execute_translate_direct(payload: TranslateDirectRequest) -> Dict[str
         model_name=llm_cfg.model_name,
     )
 
+    # Dynamic Sentinel ASIM schema resolution
+    sentinel_client = SentinelClient()
+    asim_mappings: Dict[str, str] = {}
+    candidate_fields = list(parsed_rule.referenced_fields)
+    for c in parsed_rule.clauses:
+        if c.field_name and c.field_name not in candidate_fields:
+            candidate_fields.append(c.field_name)
+
+    for field in candidate_fields:
+        resolved = sentinel_client.resolve_field_mapping(field)
+        if resolved and resolved != field:
+            asim_mappings[field] = resolved
+
     user_prompt = build_direct_translate_prompt(
         rule_name=parsed_rule.rule_name,
         severity=parsed_rule.severity,
@@ -279,6 +293,7 @@ async def _execute_translate_direct(payload: TranslateDirectRequest) -> Dict[str
         mitre_tactic=parsed_rule.mitre_tactic,
         required_terms=parsed_rule.required_terms,
         exclusion_terms=parsed_rule.exclusion_terms,
+        asim_mappings=asim_mappings,
     )
 
     deep_mode = bool(payload.deep_mode)
@@ -526,6 +541,19 @@ async def _stream_translate_direct(payload: TranslateDirectRequest):
             model_name=llm_cfg.model_name,
         )
 
+        # Dynamic Sentinel ASIM schema resolution
+        sentinel_client = SentinelClient()
+        asim_mappings: Dict[str, str] = {}
+        candidate_fields = list(parsed_rule.referenced_fields)
+        for c in parsed_rule.clauses:
+            if c.field_name and c.field_name not in candidate_fields:
+                candidate_fields.append(c.field_name)
+
+        for field in candidate_fields:
+            resolved = sentinel_client.resolve_field_mapping(field)
+            if resolved and resolved != field:
+                asim_mappings[field] = resolved
+
         user_prompt = build_direct_translate_prompt(
             rule_name=parsed_rule.rule_name,
             severity=parsed_rule.severity,
@@ -535,6 +563,7 @@ async def _stream_translate_direct(payload: TranslateDirectRequest):
             mitre_tactic=parsed_rule.mitre_tactic,
             required_terms=parsed_rule.required_terms,
             exclusion_terms=parsed_rule.exclusion_terms,
+            asim_mappings=asim_mappings,
         )
 
         max_retries = 3
