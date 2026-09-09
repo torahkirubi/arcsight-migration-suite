@@ -1,0 +1,123 @@
+================================================================================
+DETECTION ENGINEERING SPECIFICATION & RUNBOOK
+RULE NAME: Untitled ArcSight Rule
+SEVERITY: High (ArcSight Priority: 7)
+MITRE ATT&CK TACTIC: Discovery (Trustworthiness: extracted from rule)
+SOURCE RESOURCE URI: /All Stages/MITRE Tactics/Discovery
+FREQUENCY / THRESHOLD: Matching 1 events in 1 Minute
+AGGREGATION / GROUP BY: None
+GENERATED TIMESTAMP: 2026-09-09 00:50:13 UTC
+================================================================================
+
+--------------------------------------------------------------------------------
+1. MICROSOFT DEFENDER (MDE) NATIVE COVERAGE ASSESSMENT [HUMAN REVIEW ONLY]
+--------------------------------------------------------------------------------
+VERDICT: Native MDE Alert Exists (No Custom Rule Required)
+REVIEWED BY: Detection Engineer
+ANALYST JUSTIFICATION / PRODUCT NOTES:
+No analyst notes provided.
+
+--------------------------------------------------------------------------------
+2. TRANSLATED MICROSOFT DEFENDER XDR QUERY (KQL)
+--------------------------------------------------------------------------------
+DeviceProcessEvents
+| where OSPlatform == "Windows"
+| where ProcessCommandLine has_any (
+    "objectcategory=",
+    "-sc trustdmp",
+    "-sc dclist",
+    "-sc exchaddresses",
+    "-sc admincountdmp",
+    "-default -s"
+)
+| where not(ProcessCommandLine has_any ("echo On Error Resume"))
+
+[KQL Coverage Validation: PASSED | Score: 100%]
+- Missing Required Terms: None (All Present)
+- Wrongly Included Exclusions: None
+
+--------------------------------------------------------------------------------
+3. TRANSLATED SPLUNK QUERY (SPL)
+--------------------------------------------------------------------------------
+index=wineventlog (sourcetype=XmlWinEventLog:Microsoft-Windows-Sysmon/Operational OR sourcetype=WinEventLog:Microsoft-Windows-Sysmon/Operational OR sourcetype=WinEventLog:Security)
+| search vendor="Microsoft"
+| search CommandLine IN (
+    "*objectcategory=*",
+    "*-sc trustdmp*",
+    "*-sc dclist*",
+    "*-sc exchaddresses*",
+    "*-sc admincountdmp*",
+    "*-default -s*"
+)
+| search NOT (CommandLine IN ("*echo On Error Resume*"))
+
+[SPL Coverage Validation: PASSED | Score: 100%]
+- Missing Required Terms: None (All Present)
+- Wrongly Included Exclusions: None
+
+--------------------------------------------------------------------------------
+4. THREAT ANALYSIS & ATT&CK TECHNIQUE MAPPING
+--------------------------------------------------------------------------------
+THREAT SUMMARY:
+This detection rule identifies suspicious Active Directory reconnaissance activity, primarily focusing on the use of tools like ADFind.exe. Adversaries commonly use such tools post-compromise to map the Active Directory environment, discover domain trusts, enumerate domain controllers, identify privileged accounts (e.g., admincount=1), and gather information about user and group objects. This reconnaissance is a critical step in planning privilege escalation, lateral movement, and data exfiltration.
+
+MITRE ATT&CK TECHNIQUES:
+- T1087.002: Domain Account Discovery (Discovery)
+- T1069.002: Domain Group Discovery (Discovery)
+- T1482: Domain Trust Discovery (Discovery)
+- T1018: Remote System Discovery (Discovery)
+
+--------------------------------------------------------------------------------
+5. DETECTION REVIEW & RESILIENCE EVALUATION
+--------------------------------------------------------------------------------
+POTENTIAL FALSE POSITIVES:
+- Legitimate Active Directory administrators performing routine audits or troubleshooting.
+- Scheduled scripts or automated tools used for inventory, compliance checks, or security assessments.
+- Security tools or red team engagements simulating adversary behavior.
+
+EVASION BLINDSPOTS:
+- Adversary renaming the `ADFind.exe` binary to evade process name-based detections (though this rule relies on command-line arguments, which is better).
+- Obfuscating command-line arguments (e.g., using base64 encoding, splitting arguments across variables, or using different syntax for similar queries).
+- Using alternative Active Directory reconnaissance tools (e.g., PowerView, BloodHound, custom LDAP queries, `dsquery`, `Get-AD*` PowerShell cmdlets) that do not use the specific command-line strings targeted by this rule.
+- Executing `ADFind` or similar tools from a compromised process that might not log its full command line or parent process details effectively.
+- The exclusion `echo On Error Resume` might be too specific and could be bypassed by adversaries using different error handling or no error handling at all.
+
+AGGREGATION / TIME-WINDOW SANITY:
+The rule operates on an 'OnEveryEvent' basis, meaning each matching event triggers an alert immediately. This is appropriate for high-fidelity command-line detections and ensures real-time alerting for critical reconnaissance activities. No aggregation window is specified, which is suitable for this type of atomic detection.
+
+MISSING RECOMMENDED TRIAGE FIELDS:
+ParentProcessName, ParentProcessCommandLine, InitiatingUserLogonId, SourceIpAddress (if execution was remote), LoggedOnUsers (for host context)
+
+--------------------------------------------------------------------------------
+6. TIER-1 ANALYST TRIAGE & CONTAINMENT GUIDE
+--------------------------------------------------------------------------------
+INITIAL INVESTIGATION QUESTIONS:
+- What is the full command line executed?
+- What is the name and command line of the parent process?
+- What user account executed this command? Is it a service account, a regular user, or an administrator?
+- On which host did this activity occur (workstation, server, Domain Controller, jump box)?
+- Is this activity part of a known, scheduled, or approved administrative task, security audit, or penetration test?
+- Are there any other suspicious activities observed from this user or host around the same time?
+
+CONTAINMENT & REMEDIATION ACTIONS:
+- If the activity is unauthorized, immediately isolate the affected host from the network via EDR or network controls.
+- Disable or reset the credentials of the user account that executed the command if it is suspected to be compromised.
+- If a malicious executable is identified, block its hash and file path on all endpoints.
+- Review recent login activity for the user account and host for any signs of compromise or lateral movement.
+
+ESCALATION CRITERIA:
+- Execution occurred on a Domain Controller, critical server, or executive workstation.
+- The command was executed by a highly privileged account (e.g., Domain Admin, Enterprise Admin).
+- No legitimate business justification can be found for the activity.
+- Evidence of further malicious activity (e.g., lateral movement, privilege escalation, data exfiltration) is discovered.
+- Multiple hosts or user accounts are exhibiting similar suspicious reconnaissance behavior.
+
+--------------------------------------------------------------------------------
+7. AUDIT & PROVENANCE TRAIL
+--------------------------------------------------------------------------------
+MIGRATION ENGINE: ArcSight Migration Suite (Direct Path)
+LLM CLIENT: gemini-2.5-flash
+MITRE PROVENANCE: extracted from rule
+PARSER INTEGRITY: Deterministic Keyword Boundary Parsing (Zero LLM)
+MDE HUMAN SAFETY PROTOCOL: Strictly Enforced
+================================================================================

@@ -1,0 +1,23 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install dependencies
+COPY backend/requirements.txt /app/requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy backend code
+COPY backend /app/backend
+
+# Create volume directories
+RUN mkdir -p /app/backend/git_ready_output /app/backend/data /app/backend/logs
+
+ENV PORT=8001
+ENV PYTHONUNBUFFERED=1
+ENV AUDIT_DB_PATH=/app/backend/data/audit_history.db
+ENV GIT_READY_OUTPUT_DIR=/app/backend/git_ready_output
+
+EXPOSE 8001
+
+CMD ["uvicorn", "backend.app:app", "--host", "0.0.0.0", "--port", "8001"]
+

@@ -1,0 +1,45 @@
+services:
+  splunk:
+    image: splunk/splunk:latest
+    container_name: splunk
+    environment:
+      - SPLUNK_START_ARGS=--accept-license
+      - SPLUNK_GENERAL_TERMS=--accept-sgt-current-at-splunk-com
+      - SPLUNK_PASSWORD=ChangeMe123!
+    ports:
+      - "8000:8000"
+      - "8089:8089"
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    ports:
+      - "8001:8001"
+    environment:
+      - LM_STUDIO_BASE_URL=http://host.docker.internal:1234/v1
+      - DEFAULT_LLM_MODEL=qwen2.5-coder-7b-instruct
+      - SPLUNK_HOST=https://splunk:8089
+      - SPLUNK_USER=admin
+      - SPLUNK_PASSWORD=ChangeMe123!
+      - AUDIT_DB_PATH=/app/backend/data/audit_history.db
+      - GIT_READY_OUTPUT_DIR=/app/backend/git_ready_output
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./git_ready_output:/app/backend/git_ready_output
+      - ./data:/app/backend/data
+    depends_on:
+      - splunk
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    restart: unless-stopped
