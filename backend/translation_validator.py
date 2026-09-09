@@ -26,6 +26,7 @@ class ValidationResult:
     missing_exclusions: List[str]
     wrongly_included_as_match: List[str]
     coverage_pct: float
+    syntax_errors: List[str] = field(default_factory=list)
     notes: List[str] = field(default_factory=list)
 
     @property
@@ -35,11 +36,13 @@ class ValidationResult:
         - 100% of required terms are present.
         - Zero exclusion terms were erroneously included without negation.
         - All exclusion terms are properly negated.
+        - Zero syntax or operator errors.
         """
         return (
             len(self.missing_required) == 0
             and len(self.wrongly_included_as_match) == 0
             and len(self.missing_exclusions) == 0
+            and len(self.syntax_errors) == 0
         )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -56,8 +59,58 @@ class ValidationResult:
             "exclusion_terms_checked": self.exclusion_terms_checked,
             "missing_exclusions": self.missing_exclusions,
             "wrongly_included_as_match": self.wrongly_included_as_match,
+            "syntax_errors": self.syntax_errors,
             "notes": self.notes,
         }
+
+
+VALID_KQL_TABLES = {
+    # Microsoft Defender XDR Device Tables
+    "DeviceProcessEvents",
+    "DeviceNetworkEvents",
+    "DeviceFileEvents",
+    "DeviceRegistryEvents",
+    "DeviceLogonEvents",
+    "DeviceEvents",
+    "DeviceInfo",
+    "DeviceNetworkInfo",
+    "DeviceFileCertificateInfo",
+    # Microsoft Defender Identity Tables
+    "IdentityLogonEvents",
+    "IdentityQueryEvents",
+    "IdentityDirectoryEvents",
+    # Microsoft Defender Email & Cloud Tables
+    "EmailEvents",
+    "EmailUrlInfo",
+    "EmailAttachmentInfo",
+    "EmailPostDeliveryEvents",
+    "CloudAppEvents",
+    "AppFileEvents",
+    # Microsoft Sentinel Security & Core Logs
+    "SecurityEvent",
+    "CommonSecurityLog",
+    "Syslog",
+    "WindowsEvent",
+    "SecurityAlert",
+    "SecurityIncident",
+    "AlertInfo",
+    "AlertEvidence",
+    "DnsEvents",
+    "DnsInventory",
+    "AuditLogs",
+    "SigninLogs",
+    "AADNonInteractiveUserSignInLogs",
+    "AADServicePrincipalSignInLogs",
+    "OfficeActivity",
+    "AzureActivity",
+    "BehaviorAnalytics",
+    "NetworkAccessTraffic",
+    "AWSCloudTrail",
+    "W3CIISLog",
+    "Event",
+    "ThreatIntelligenceIndicator",
+}
+VALID_KQL_TABLES_LOWER = {t.lower() for t in VALID_KQL_TABLES}
 
 
 def is_in_negated_context(query_text: str, term: str, language: str) -> bool:
@@ -80,11 +133,11 @@ def is_in_negated_context(query_text: str, term: str, language: str) -> bool:
         rf'\bnot\s*\([^)]*?{re.escape(clean_term)}[^)]*?\)',
         rf'!\s*=\s*["\']?[^"\'\|\r\n]*?{re.escape(clean_term)}["\']?',
         rf'!\s*~\s*["\']?[^"\'\|\r\n]*?{re.escape(clean_term)}["\']?',
-        # KQL: !has, !contains, !in, !=, not(...)
+        # KQL: !has, !contains, !in, !=, !has_any, !has_all, not(...)
         rf'!(?:has|contains|startswith|endswith|in|has_any|has_all)\b[^\|\r\n]*?{re.escape(clean_term)}',
-        rf'\bnot\s*\([^)]*?{re.escape(clean_term)}[^)]*?\)',
-        rf'\bwhere\s+not\b[^\|\r\n]*?{re.escape(clean_term)}',
-        rf'\bwhere\s+![^\|\r\n]*?{re.escape(clean_term)}',
+        rf'\bnot\s*\([^|]*?{re.escape(clean_term)}',
+        rf'\bwhere\s+not\b[^|]*?{re.escape(clean_term)}',
+        rf'\bwhere\s+![^|]*?{re.escape(clean_term)}',
     ]
 
     for pattern in negation_patterns:
@@ -96,7 +149,10 @@ def is_in_negated_context(query_text: str, term: str, language: str) -> bool:
     for line in lines:
         lower_line = line.lower()
         if clean_term in lower_line:
-            if any(op in lower_line for op in ["!=", "!has", "!contains", "!in", "not ", "not(", "where not"]):
+            if any(op in lower_line for op in [
+                "!=", "!has", "!has_any", "!has_all", "!contains", "!in",
+                "!startswith", "!endswith", "not ", "not(", "where not", "where !"
+            ]):
                 return True
 
     return False
@@ -109,17 +165,58 @@ def validate_query(
     target_language: str = "KQL",
 ) -> ValidationResult:
     """
-    Validates a generated query against required match terms and exclusion terms.
+    Validates a generated query against required match terms and exclusion terms,
+    and performs target-language structural and operator validation.
     """
     clean_query = query_text or ""
     lower_query = clean_query.lower()
     missing_required: List[str] = []
     missing_exclusions: List[str] = []
     wrongly_included: List[str] = []
+    syntax_errors: List[str] = []
     notes: List[str] = []
 
     safe_req = [str(r).strip() for r in (required_terms or []) if r and str(r).strip()]
     safe_excl = [str(e).strip() for e in (exclusion_terms or []) if e and str(e).strip()]
+
+    # Target-Language Specific Structural & Operator Validation
+    if target_language.upper() == "KQL":
+        # 1. Table Validation
+        # Filter out empty lines and single-line comments (// ...)
+        non_comment_lines = [
+            line.strip()
+            for line in clean_query.strip().splitlines()
+            if line.strip() and not line.strip().startswith("//")
+        ]
+        if not non_comment_lines:
+            syntax_errors.append("Empty KQL query: missing target table.")
+            notes.append("Invalid or missing target table: query is empty.")
+        else:
+            first_line = non_comment_lines[0]
+            if first_line.startswith("|"):
+                syntax_errors.append("Query begins with a pipe (|). A valid target table must precede any operators.")
+                notes.append("Invalid or missing target table: query begins with a pipe (|).")
+            else:
+                first_word = re.split(r'[\s|;(]', first_line)[0].strip()
+                if not first_word or first_word.lower() not in VALID_KQL_TABLES_LOWER:
+                    syntax_errors.append(f"Invalid target table: '{first_word}'")
+                    notes.append(
+                        f"Invalid target table '{first_word}'. Query must begin with a valid Microsoft Sentinel table "
+                        "(e.g., DeviceProcessEvents, DeviceNetworkEvents, SecurityEvent, CommonSecurityLog, Syslog)."
+                    )
+
+        # 2. SPL Operator Rejection in KQL
+        # Strip string literals so tokens inside quotes don't trigger false positives
+        unquoted_query = re.sub(r'"[^"\\]*(?:\\.[^"\\]*)*"|\'[^\'\\]*(?:\\.[^\'\\]*)*\'', '""', clean_query)
+        spl_operator_checks = [
+            (r'\|\s*eval\b', "Injected SPL operator '| eval' detected (use '| extend' in KQL)."),
+            (r'\|\s*rex\b', "Injected SPL operator '| rex' detected (use '| parse' or extract() in KQL)."),
+            (r'(?:\|\s*search\b|(?:^|[\r\n])\s*search\b)', "Injected SPL operator 'search' detected (use '| where' in KQL)."),
+        ]
+        for pattern, err_msg in spl_operator_checks:
+            if re.search(pattern, unquoted_query, re.IGNORECASE):
+                syntax_errors.append(err_msg)
+                notes.append(f"Invalid operator: {err_msg}")
 
     # 1. Validate Required Terms
     for clean_req in safe_req:
@@ -163,6 +260,7 @@ def validate_query(
         missing_exclusions=missing_exclusions,
         wrongly_included_as_match=wrongly_included,
         coverage_pct=coverage_pct,
+        syntax_errors=syntax_errors,
         notes=notes,
     )
 
