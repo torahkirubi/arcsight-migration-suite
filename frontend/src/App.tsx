@@ -3,8 +3,10 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { LLMConfig } from './api/client';
 import { HeaderHealthBar } from './components/HeaderHealthBar';
 import { DirectTranslateView } from './components/DirectTranslateView';
+import { IntegrationSettings } from './components/IntegrationSettings';
 import { ModelSelector } from './components/ModelSelector';
 import { AuditLogModal } from './components/AuditLogModal';
+import { ArrowLeft, ShieldCheck } from 'lucide-react';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -21,6 +23,7 @@ export const AppContent: React.FC = () => {
     custom_base_url: 'http://localhost:1234/v1',
   });
 
+  const [activeTab, setActiveTab] = useState<'translate' | 'settings'>('translate');
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isAuditLogOpen, setIsAuditLogOpen] = useState(false);
 
@@ -29,13 +32,39 @@ export const AppContent: React.FC = () => {
       {/* Precision Header & Telemetry Bar */}
       <HeaderHealthBar
         llmConfig={llmConfig}
+        activeTab={activeTab}
+        onSelectTab={setActiveTab}
         onOpenSettings={() => setIsSettingsOpen(true)}
         onOpenAuditLog={() => setIsAuditLogOpen(true)}
       />
 
       {/* Main Workspace */}
       <main className="flex-1 w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 md:py-10">
-        <DirectTranslateView llmConfig={llmConfig} />
+        {activeTab === 'translate' ? (
+          <DirectTranslateView llmConfig={llmConfig} />
+        ) : (
+          <div className="space-y-6 animate-fadeIn">
+            {/* Navigation / Return Breadcrumb */}
+            <div className="flex items-center justify-between">
+              <button
+                onClick={() => setActiveTab('translate')}
+                className="flex items-center gap-2 text-xs font-medium text-zinc-400 hover:text-cyan-300 transition-colors cursor-pointer group"
+              >
+                <ArrowLeft className="w-3.5 h-3.5 group-hover:-translate-x-0.5 transition-transform" />
+                <span>Return to Detection Workspace</span>
+              </button>
+              <div className="flex items-center gap-2 text-xs text-zinc-500">
+                <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+                <span>Integration Vault</span>
+              </div>
+            </div>
+
+            {/* Centered Settings Card */}
+            <div className="flex justify-center">
+              <IntegrationSettings onSaved={() => setActiveTab('translate')} />
+            </div>
+          </div>
+        )}
       </main>
 
       {/* Minimalist Footnote */}

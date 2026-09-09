@@ -1,18 +1,22 @@
 import React, { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { fetchHealth, LLMConfig } from '../api/client';
-import { Shield, Server, Cpu, Database, RefreshCw, History, SlidersHorizontal } from 'lucide-react';
+import { Shield, Server, Cpu, Database, RefreshCw, History, SlidersHorizontal, Settings } from 'lucide-react';
 
 interface HeaderHealthBarProps {
   llmConfig: LLMConfig;
   onOpenSettings: () => void;
   onOpenAuditLog: () => void;
+  activeTab?: 'translate' | 'settings';
+  onSelectTab?: (tab: 'translate' | 'settings') => void;
 }
 
 export const HeaderHealthBar: React.FC<HeaderHealthBarProps> = ({
   llmConfig,
   onOpenSettings,
   onOpenAuditLog,
+  activeTab = 'translate',
+  onSelectTab,
 }) => {
   const [showTooltip, setShowTooltip] = useState<string | null>(null);
 
@@ -62,13 +66,16 @@ export const HeaderHealthBar: React.FC<HeaderHealthBarProps> = ({
     <header className="border-b border-white/[0.06] bg-[#07080b]/80 backdrop-blur-xl sticky top-0 z-40 px-4 sm:px-6 lg:px-8 py-3.5 transition-all">
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 max-w-7xl mx-auto">
         {/* Brand & Suite Identification */}
-        <div className="flex items-center gap-3.5">
-          <div className="w-9 h-9 rounded-xl bg-white/[0.04] border border-white/[0.08] flex items-center justify-center text-cyan-400/90 shadow-sm">
+        <div
+          onClick={() => onSelectTab?.('translate')}
+          className="flex items-center gap-3.5 cursor-pointer select-none group"
+        >
+          <div className="w-9 h-9 rounded-xl bg-white/[0.04] border border-white/[0.08] group-hover:border-cyan-400/30 flex items-center justify-center text-cyan-400/90 shadow-sm transition-colors">
             <Shield className="w-4 h-4 stroke-[1.75]" />
           </div>
           <div>
             <div className="flex items-center gap-2.5">
-              <span className="text-sm font-semibold tracking-tight text-white">
+              <span className="text-sm font-semibold tracking-tight text-white group-hover:text-cyan-200 transition-colors">
                 ArcSight Migration
               </span>
               <span className="px-2 py-0.5 text-[10px] font-medium tracking-wider uppercase rounded-full bg-cyan-400/10 text-cyan-300/90 border border-cyan-400/20">
@@ -209,10 +216,25 @@ export const HeaderHealthBar: React.FC<HeaderHealthBarProps> = ({
 
           <button
             onClick={onOpenSettings}
-            className="flex items-center gap-2 px-3 py-1.5 rounded-xl border border-cyan-400/20 bg-cyan-400/[0.05] hover:bg-cyan-400/[0.1] text-cyan-300 hover:text-cyan-200 text-xs font-medium transition-all duration-150"
+            className="flex items-center gap-2 px-3 py-1.5 rounded-xl border border-white/[0.08] bg-white/[0.02] hover:bg-white/[0.06] text-zinc-300 hover:text-white text-xs font-medium transition-all duration-150"
+            title="Configure LLM & Routing"
           >
             <SlidersHorizontal className="w-3.5 h-3.5 stroke-[1.75]" />
-            <span>Model Engine</span>
+            <span className="hidden sm:inline">Model Engine</span>
+          </button>
+
+          {/* Sentinel Settings Gear Button */}
+          <button
+            onClick={() => onSelectTab?.(activeTab === 'settings' ? 'translate' : 'settings')}
+            className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border text-xs font-medium transition-all duration-150 cursor-pointer ${
+              activeTab === 'settings'
+                ? 'border-cyan-400/40 bg-cyan-400/[0.12] text-cyan-200 shadow-[0_0_12px_rgba(6,182,212,0.15)]'
+                : 'border-cyan-400/20 bg-cyan-400/[0.05] hover:bg-cyan-400/[0.1] text-cyan-300 hover:text-cyan-200'
+            }`}
+            title={activeTab === 'settings' ? 'Return to Detection Workspace' : 'Configure Microsoft Sentinel'}
+          >
+            <Settings className="w-3.5 h-3.5 stroke-[1.75]" />
+            <span>{activeTab === 'settings' ? 'Workspace' : 'Sentinel Settings'}</span>
           </button>
         </div>
       </div>
