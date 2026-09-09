@@ -6,6 +6,7 @@ import { DirectTranslateView } from './components/DirectTranslateView';
 import { IntegrationSettings } from './components/IntegrationSettings';
 import { ModelSelector } from './components/ModelSelector';
 import { AuditLogModal } from './components/AuditLogModal';
+import { LoginGate } from './components/LoginGate';
 import { ArrowLeft, ShieldCheck } from 'lucide-react';
 
 const queryClient = new QueryClient({
@@ -17,6 +18,8 @@ const queryClient = new QueryClient({
 });
 
 export const AppContent: React.FC = () => {
+  const [token, setToken] = useState<string | null>(sessionStorage.getItem('auth_token'));
+
   const [llmConfig, setLlmConfig] = useState<LLMConfig>({
     provider: 'lm_studio',
     model_name: 'qwen2.5-coder-7b-instruct',
@@ -26,6 +29,10 @@ export const AppContent: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'translate' | 'settings'>('translate');
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isAuditLogOpen, setIsAuditLogOpen] = useState(false);
+
+  if (!token) {
+    return <LoginGate onLoginSuccess={setToken} />;
+  }
 
   return (
     <div className="min-h-screen bg-[#07080b] bg-[radial-gradient(ellipse_80%_60%_at_50%_-10%,rgba(56,189,248,0.04),transparent)] text-slate-200 flex flex-col font-sans antialiased selection:bg-cyan-500/20 selection:text-cyan-200">
