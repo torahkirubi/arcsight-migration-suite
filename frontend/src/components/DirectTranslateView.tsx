@@ -13,6 +13,7 @@ import { MitreBadge } from './MitreBadge';
 import { MdeCoverageCard } from './MdeCoverageCard';
 import { ValidationReport } from './ValidationReport';
 import { ThreatAnalysisView } from './ThreatAnalysisView';
+import { TelemetryTunerCard } from './TelemetryTunerCard';
 import { GitExportViewer } from './GitExportViewer';
 import { SplunkTestModal } from './SplunkTestModal';
 import {
@@ -205,7 +206,7 @@ export const DirectTranslateView: React.FC<DirectTranslateViewProps> = ({ llmCon
               <h2 className="text-base font-semibold text-white tracking-tight">
                 Source ArcSight ESM Rule
               </h2>
-              <p className="text-xs text-zinc-400 font-light mt-0.5">
+              <p className="text-base text-zinc-400 font-light mt-0.5">
                 Deterministic regex boundary parsing. Zero LLM involvement in condition extraction.
               </p>
             </div>
@@ -228,7 +229,7 @@ export const DirectTranslateView: React.FC<DirectTranslateViewProps> = ({ llmCon
         />
 
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pt-1">
-          <div className="flex items-center gap-2 text-xs text-zinc-400">
+          <div className="flex items-center gap-2 text-base text-zinc-400">
             <Sliders className="w-3.5 h-3.5 text-zinc-500" />
             <span>Target Engine:</span>
             <span className="text-zinc-200 font-medium">{llmConfig.provider}</span>
@@ -314,14 +315,14 @@ export const DirectTranslateView: React.FC<DirectTranslateViewProps> = ({ llmCon
 
         {/* Translation Error Banner */}
         {translationError && (
-          <div className="p-4 rounded-xl border border-rose-500/30 bg-rose-500/[0.05] text-rose-300 text-xs sm:text-sm flex items-start gap-3">
+          <div className="p-4 rounded-xl border border-rose-500/30 bg-rose-500/[0.05] text-rose-300 text-base flex items-start gap-3">
             <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-rose-400 stroke-[1.75]" />
             <div className="space-y-1">
               <div className="font-semibold text-rose-200">Translation Engine Exception</div>
-              <p className="text-zinc-400 text-xs leading-relaxed">{translationError}</p>
-              <div className="text-zinc-400 text-xs mt-1">
+              <p className="text-zinc-400 text-base leading-relaxed">{translationError}</p>
+              <div className="text-zinc-400 text-base mt-1">
                 Please verify your LLM service is active at{' '}
-                <code className="font-mono bg-black/40 px-1.5 py-0.5 rounded border border-white/[0.08] text-zinc-300">
+                <code className="font-mono bg-black/40 px-1.5 py-0.5 rounded border border-white/[0.08] text-zinc-300 text-sm leading-relaxed">
                   {llmConfig.custom_base_url || 'http://localhost:1234/v1'}
                 </code>
               </div>
@@ -355,7 +356,7 @@ export const DirectTranslateView: React.FC<DirectTranslateViewProps> = ({ llmCon
                 <span className="text-[11px] font-medium uppercase tracking-wider text-zinc-400">
                   Rule Name
                 </span>
-                <div className="text-sm font-semibold text-white">
+                <div className="text-base font-semibold text-white">
                   {translationResult.parsed_rule.rule_name}
                 </div>
               </div>
@@ -419,7 +420,7 @@ export const DirectTranslateView: React.FC<DirectTranslateViewProps> = ({ llmCon
                       </span>
                     ))
                   ) : (
-                    <span className="text-xs text-zinc-500 italic">None (Realtime single-event)</span>
+                    <span className="text-base text-zinc-500 italic">None (Realtime single-event)</span>
                   )}
                 </div>
               </div>
@@ -450,8 +451,8 @@ export const DirectTranslateView: React.FC<DirectTranslateViewProps> = ({ llmCon
                   </button>
                 </div>
 
-                <div className="bg-[#07080b]/90 rounded-xl border border-white/[0.06] p-4 sm:p-5 min-h-[320px] max-h-[460px] overflow-y-auto font-mono text-xs sm:text-sm text-cyan-200/90 leading-relaxed">
-                  <pre className="whitespace-pre-wrap">{translationResult.kql_query}</pre>
+                <div className="bg-[#07080b]/90 rounded-xl border border-white/[0.06] p-4 sm:p-5 min-h-[320px] max-h-[460px] overflow-y-auto font-mono text-sm text-cyan-200/90 leading-relaxed">
+                  <pre className="whitespace-pre-wrap text-sm leading-relaxed">{translationResult.kql_query}</pre>
                 </div>
               </div>
 
@@ -507,8 +508,8 @@ export const DirectTranslateView: React.FC<DirectTranslateViewProps> = ({ llmCon
                   </div>
                 </div>
 
-                <div className="bg-[#07080b]/90 rounded-xl border border-white/[0.06] p-4 sm:p-5 min-h-[320px] max-h-[460px] overflow-y-auto font-mono text-xs sm:text-sm text-emerald-200/90 leading-relaxed">
-                  <pre className="whitespace-pre-wrap">{translationResult.spl_query}</pre>
+                <div className="bg-[#07080b]/90 rounded-xl border border-white/[0.06] p-4 sm:p-5 min-h-[320px] max-h-[460px] overflow-y-auto font-mono text-sm text-emerald-200/90 leading-relaxed">
+                  <pre className="whitespace-pre-wrap text-sm leading-relaxed">{translationResult.spl_query}</pre>
                 </div>
               </div>
 
@@ -520,6 +521,9 @@ export const DirectTranslateView: React.FC<DirectTranslateViewProps> = ({ llmCon
             </div>
           </div>
 
+          {/* Historical Telemetry Baseline & Dynamic Threshold Card */}
+          <TelemetryTunerCard tuning_recommendation={translationResult.tuning_recommendation} />
+
           {/* Threat Analysis & Playbook */}
           <div className="rounded-2xl border border-white/[0.07] bg-[#0c0d14]/80 backdrop-blur-md p-6 sm:p-8 space-y-6">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -527,7 +531,7 @@ export const DirectTranslateView: React.FC<DirectTranslateViewProps> = ({ llmCon
                 <h3 className="text-base font-semibold text-white tracking-tight">
                   Threat Analysis &amp; Analyst Triage Guide
                 </h3>
-                <p className="text-xs text-zinc-400 font-light mt-0.5">
+                <p className="text-base text-zinc-400 font-light mt-0.5">
                   Automated synthesis of SOC investigation questions, evasion blindspots, and MITRE mapping.
                 </p>
               </div>
@@ -553,7 +557,7 @@ export const DirectTranslateView: React.FC<DirectTranslateViewProps> = ({ llmCon
               onClick={() => setShowDiagnostics(!showDiagnostics)}
               className="w-full flex items-center justify-between p-4 px-6 text-left hover:bg-white/[0.02] transition-colors"
             >
-              <div className="flex items-center gap-2.5 text-xs font-medium text-zinc-400">
+              <div className="flex items-center gap-2.5 text-base font-medium text-zinc-400">
                 <Terminal className="w-4 h-4 stroke-[1.75] text-zinc-500" />
                 <span>Engine Diagnostic Log &amp; Raw Completion Stream</span>
               </div>
@@ -568,7 +572,7 @@ export const DirectTranslateView: React.FC<DirectTranslateViewProps> = ({ llmCon
                 <div className="text-[11px] font-medium uppercase tracking-wider text-zinc-500">
                   Raw Output Stream
                 </div>
-                <pre className="p-4 rounded-xl border border-white/[0.06] bg-[#07080b] font-mono text-xs text-zinc-400 whitespace-pre-wrap max-h-56 overflow-y-auto leading-relaxed">
+                <pre className="p-4 rounded-xl border border-white/[0.06] bg-[#07080b] font-mono text-sm text-zinc-400 whitespace-pre-wrap max-h-56 overflow-y-auto leading-relaxed">
                   {translationResult.raw_llm_output}
                 </pre>
               </div>
@@ -581,7 +585,7 @@ export const DirectTranslateView: React.FC<DirectTranslateViewProps> = ({ llmCon
               <h3 className="text-base font-semibold text-white tracking-tight">
                 Final Detection Engineering Artifact
               </h3>
-              <p className="text-xs text-zinc-400 font-light">
+              <p className="text-base text-zinc-400 font-light">
                 Merges deterministic metadata, validated queries, AI triage runbook, and human MDE verdict into a git-ready specification.
               </p>
             </div>
