@@ -219,14 +219,12 @@ class SentinelClient:
                 logger.error(f"Diagnostics pipeline failed: Azure Log Analytics query exception: {exc}", exc_info=True)
 
         return {
-            "success": True,
-            "row_count": 150,
-            "sample_records": [
-                {"TimeGenerated": "2026-09-10T00:00:00Z", "Computer": f"HOST-{i}", "EventID": 4625}
-                for i in range(10)
-            ],
+            "success": False,
+            "row_count": 0,
+            "sample_records": [],
             "timespan_days": timespan_days,
             "query": query_text,
+            "error": "No Sentinel workspace credentials configured. Real telemetry records unavailable.",
         }
 
     def execute_query(
@@ -249,19 +247,14 @@ class SentinelClient:
                     columns = [col.get("name") if isinstance(col, dict) else str(col) for col in primary_table.get("columns", [])]
                     rows = primary_table.get("rows", [])
                     extracted = []
-                    for row in rows[:10]:
+                    for row in rows[:20]:
                         if isinstance(row, list) and columns:
                             extracted.append(dict(zip(columns, row)))
                         elif isinstance(row, dict):
                             extracted.append(row)
                     if extracted:
                         sample_records = extracted
-        if not sample_records and row_count > 0:
-            sample_records = [
-                {"TimeGenerated": "2026-09-10T00:00:00Z", "Computer": f"HOST-{i}", "EventID": 4625}
-                for i in range(min(row_count, 10))
-            ]
-        elif not sample_records:
+        if not sample_records:
             sample_records = []
         return {
             "success": True,

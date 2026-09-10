@@ -408,7 +408,151 @@ class TestTelemetryTunerAPI(unittest.TestCase):
             self.assertEqual(res["sample_records"][0]["Computer"], "DC-01")
             self.assertEqual(res["sample_records"][0]["AccountName"], "admin-scanner")
 
+    def test_execute_kql_query_no_credentials_returns_empty_sample_records(self):
+        """Assert that execute_kql_query returns empty sample_records (not HOST-i mocks) when no credentials are configured.
+
+        Root cause: The fallback block in execute_kql_query populates sample_records with synthetic
+        HOST-{i} data, which propagates all the way to the LLM prompt, preventing real diagnosis.
+        When no Sentinel credentials are configured, sample_records should be [] so that the tuning
+        pipeline can correctly detect that no real data is available.
+        """
+        client = SentinelClient("", "", "", "")
+        result = client.execute_kql_query("SecurityEvent | take 10")
+        self.assertIsInstance(result, dict)
+        sample_records = result.get("sample_records", [])
+        # Must not return synthetic HOST-{i} mock data when no real credentials are configured
+        for rec in sample_records:
+            if isinstance(rec, dict):
+                computer = rec.get("Computer", "")
+                self.assertFalse(
+                    computer.startswith("HOST-"),
+                    f"execute_kql_query must not return synthetic HOST-{{i}} mock records; got: {rec}"
+                )
+
+    def test_execute_kql_query_with_tables_returns_rich_records_with_all_fields(self):
+        """Assert execute_kql_query unpacks a tables response with Computer, AccountName, ProcessName, CommandLine.
+
+        The Azure Log Analytics API returns: {"tables": [{"columns": [...], "rows": [...]}]}
+        execute_kql_query must unpack this structure into sample_records list of dicts.
+        We test this by patching the internal HTTP call path via execute_kql_query itself,
+        injecting a realistic API response shape at the sentinel_client level.
+        """
+        client = SentinelClient("tenant", "client", "secret", "workspace")
+        # Simulate the parsed JSON body the Azure LA API returns
+        real_api_tables_response = {
+            "success": True,
+            "row_count": 2,
+            "tables": [{
+                "name": "PrimaryResult",
+                "columns": [
+                    {"name": "TimeGenerated", "type": "datetime"},
+                    {"name": "Computer", "type": "string"},
+                    {"name": "AccountName", "type": "string"},
+                    {"name": "ProcessName", "type": "string"},
+                    {"name": "CommandLine", "type": "string"},
+                    {"name": "EventID", "type": "int"},
+                ],
+                "rows": [
+                    ["2026-09-11T00:00:00Z", "SRV-01.corp.local", "svc-scanner", "powershell.exe",
+                     "powershell -nop -enc <base64>", 4625],
+                    ["2026-09-11T00:01:00Z", "SRV-02.corp.local", "svc-backup", "nssm.exe",
+                     "nssm start BackupService", 4624],
+                ]
+            }]
+        }
+        # execute_query calls execute_kql_query internally; mock execute_kql_query to return tables structure
+        with patch.object(client, "execute_kql_query", return_value=real_api_tables_response):
+            result = client.execute_query("SecurityEvent | take 20")
+
+        records = result["sample_records"]
+        self.assertEqual(len(records), 2)
+        # First row: SRV-01 with svc-scanner
+        self.assertEqual(records[0]["Computer"], "SRV-01.corp.local")
+        self.assertEqual(records[0]["AccountName"], "svc-scanner")
+        self.assertEqual(records[0]["ProcessName"], "powershell.exe")
+        self.assertEqual(records[0]["CommandLine"], "powershell -nop -enc <base64>")
+        self.assertEqual(records[0]["EventID"], 4625)
+        # Second row: SRV-02 with svc-backup
+        self.assertEqual(records[1]["Computer"], "SRV-02.corp.local")
+        self.assertEqual(records[1]["AccountName"], "svc-backup")
+        self.assertNotIn("HOST-", records[0].get("Computer", ""))
+        self.assertNotIn("HOST-", records[1].get("Computer", ""))
+
+    def test_full_pipeline_llm_prompt_receives_rich_records_not_host_mocks(self):
+        """Assert that the LLM diagnose_telemetry_noise call receives records with AccountName, ProcessName, CommandLine.
+
+        This test validates that when Sentinel returns rich records (Computer, AccountName, ProcessName,
+        CommandLine), those fields survive intact all the way to the diagnose_telemetry_noise call —
+        not the synthetic HOST-{i} mock records.
+        """
+        import asyncio
+        rich_sentinel_records = [
+            {
+                "TimeGenerated": "2026-09-11T00:00:00Z",
+                "Computer": "SRV-01.corp.local",
+                "AccountName": "svc-scanner",
+                "ProcessName": "powershell.exe",
+                "CommandLine": "powershell -nop -enc <base64>",
+                "EventID": 4625,
+            }
+        ]
+        mock_sentinel_res = {
+            "row_count": 50,
+            "sample_records": rich_sentinel_records,
+        }
+        captured_prompt_records = []
+
+        async def mock_diagnose(raw_kql, sample_records, llm_client):
+            captured_prompt_records.extend(sample_records)
+            return {
+                "noise_source": "Automated Scanner",
+                "affected_entities": ["svc-scanner"],
+                "mitigation_steps": ["Exclude svc-scanner"]
+            }
+
+        mock_llm = MagicMock()
+        mock_llm.complete = AsyncMock(return_value=json.dumps({
+            "noise_source": "Automated Scanner",
+            "affected_entities": ["svc-scanner"],
+            "mitigation_steps": ["Exclude svc-scanner"]
+        }))
+
+        with patch.object(SentinelClient, "execute_query", create=True, return_value=mock_sentinel_res), \
+             patch("backend.app.get_llm_client", return_value=mock_llm), \
+             patch("backend.app.diagnose_telemetry_noise", side_effect=mock_diagnose):
+
+            resp = self.client.post(
+                "/api/telemetry/tune",
+                json={"raw_kql": "SecurityEvent | where EventID == 4625 | summarize count() by AccountName, Computer", "current_threshold": 10},
+                headers=self.auth_headers,
+            )
+
+        self.assertEqual(resp.status_code, 200)
+        # Verify the records that reached the LLM have real fields — not HOST-{i} mocks
+        self.assertGreater(len(captured_prompt_records), 0, "No records were forwarded to diagnose_telemetry_noise")
+        first_rec = captured_prompt_records[0]
+        self.assertIn("AccountName", first_rec, "AccountName must be present in records passed to LLM")
+        self.assertIn("ProcessName", first_rec, "ProcessName must be present in records passed to LLM")
+        self.assertIn("CommandLine", first_rec, "CommandLine must be present in records passed to LLM")
+        self.assertNotEqual(first_rec.get("Computer", ""), "HOST-0",
+                            "Synthetic HOST-0 mock must not reach the LLM prompt")
+
+    def test_apply_exclusions_targets_commandline_when_explicitly_specified(self):
+        """Assert apply_exclusions targets CommandLine when target_field is explicitly set."""
+        from backend.telemetry_tuner import apply_exclusions
+        raw_kql = (
+            "SecurityEvent\n"
+            "| where EventID == 4688\n"
+            "| summarize count() by CommandLine, Computer"
+        )
+        tuned = apply_exclusions(raw_kql, ["powershell -nop -enc <base64>", "nssm start BackupService"],
+                                 target_field="CommandLine")
+        self.assertIn("CommandLine !in (", tuned)
+        self.assertNotIn("Object", tuned)
+        self.assertNotIn("Computer !in", tuned)
+        # Negative logic retention
+        self.assertIn("!in", tuned)
+
 
 if __name__ == "__main__":
     unittest.main()
-
