@@ -276,7 +276,96 @@ class TestDirectPipeline(unittest.TestCase):
         self.assertIn("destinationAddress -> DstIpAddr", user_prompt)
         self.assertIn("deviceAction -> EventResult", user_prompt)
 
+    @patch("backend.app.get_llm_client")
+    @patch("backend.app.SentinelClient")
+    def test_pipeline_passes_generated_kql_to_sentinel_execute_kql_query(self, mock_sentinel_cls, mock_get_llm):
+        """Verify the translation pipeline extracts generated KQL and passes it to SentinelClient.execute_kql_query."""
+        mock_llm = MagicMock()
+        mock_llm.complete = AsyncMock(return_value=MOCK_LLM_OUTPUT)
+        mock_get_llm.return_value = mock_llm
+
+        mock_sentinel = MagicMock()
+        mock_sentinel.execute_kql_query.return_value = {"row_count": 150, "timespan_days": 7, "success": True}
+        mock_sentinel_cls.return_value = mock_sentinel
+
+        req = TranslateDirectRequest(
+            raw_text=SAMPLE_ARCSIGHT_RULE,
+            llm_config=LLMConfigPayload(provider="lm_studio"),
+            deep_mode=False,
+        )
+        asyncio.run(execute_translate_direct(req))
+
+        mock_sentinel.execute_kql_query.assert_called_once()
+        called_args, called_kwargs = mock_sentinel.execute_kql_query.call_args
+        kql_passed = called_args[0] if called_args else called_kwargs.get("query_text", "")
+        timespan_passed = called_args[1] if len(called_args) > 1 else called_kwargs.get("timespan_days", 7)
+
+        self.assertIn("DeviceProcessEvents", kql_passed)
+        self.assertEqual(timespan_passed, 7)
+
+    @patch("backend.app.get_llm_client")
+    @patch("backend.app.SentinelClient")
+    @patch("backend.app.calculate_dynamic_threshold", create=True)
+    def test_pipeline_invokes_calculate_dynamic_threshold_with_baseline_and_static_threshold(
+        self, mock_calc_threshold, mock_sentinel_cls, mock_get_llm
+    ):
+        """Verify pipeline passes 7-day baseline event count and static rule threshold to calculate_dynamic_threshold."""
+        mock_llm = MagicMock()
+        mock_llm.complete = AsyncMock(return_value=MOCK_LLM_OUTPUT)
+        mock_get_llm.return_value = mock_llm
+
+        mock_sentinel = MagicMock()
+        mock_sentinel.execute_kql_query.return_value = {"row_count": 150, "timespan_days": 7, "success": True}
+        mock_sentinel_cls.return_value = mock_sentinel
+
+        mock_calc_threshold.return_value = {
+            "original_threshold": 5,
+            "suggested_threshold": 180,
+            "tuning_rationale": "Baseline of 150 events exceeds static threshold of 5.",
+        }
+
+        req = TranslateDirectRequest(
+            raw_text=SAMPLE_ARCSIGHT_RULE,
+            llm_config=LLMConfigPayload(provider="lm_studio"),
+            deep_mode=False,
+        )
+        asyncio.run(execute_translate_direct(req))
+
+        # SAMPLE_ARCSIGHT_RULE has "Matching 5 events in 10 Minutes" -> static_rule_threshold=5
+        mock_calc_threshold.assert_called_once_with(
+            baseline_event_count=150,
+            static_rule_threshold=5,
+        )
+
+    @patch("backend.app.get_llm_client")
+    @patch("backend.app.SentinelClient")
+    def test_pipeline_response_appends_tuning_recommendation(self, mock_sentinel_cls, mock_get_llm):
+        """Verify the pipeline's final JSON response appends tuning_recommendation object."""
+        mock_llm = MagicMock()
+        mock_llm.complete = AsyncMock(return_value=MOCK_LLM_OUTPUT)
+        mock_get_llm.return_value = mock_llm
+
+        mock_sentinel = MagicMock()
+        mock_sentinel.execute_kql_query.return_value = {"row_count": 150, "timespan_days": 7, "success": True}
+        mock_sentinel_cls.return_value = mock_sentinel
+
+        req = TranslateDirectRequest(
+            raw_text=SAMPLE_ARCSIGHT_RULE,
+            llm_config=LLMConfigPayload(provider="lm_studio"),
+            deep_mode=False,
+        )
+        res = asyncio.run(execute_translate_direct(req))
+
+        self.assertIn("tuning_recommendation", res)
+        rec = res["tuning_recommendation"]
+        self.assertIsInstance(rec, dict)
+        self.assertIn("original_threshold", rec)
+        self.assertIn("suggested_threshold", rec)
+        self.assertIn("tuning_rationale", rec)
+        self.assertEqual(rec["original_threshold"], 5)
+        self.assertGreater(rec["suggested_threshold"], 150)
+        self.assertIn("150", rec["tuning_rationale"])
+
 
 if __name__ == "__main__":
     unittest.main()
-

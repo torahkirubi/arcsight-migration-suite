@@ -82,5 +82,33 @@ describe('App Component & Tab Navigation', () => {
 
     expect(screen.getByText(/Microsoft Sentinel Integration/i)).toBeInTheDocument();
   });
+
+  it('renders Logout button when authenticated', () => {
+    sessionStorage.setItem('auth_token', 'mock-jwt-token');
+
+    renderWithQueryClient(<AppContent />);
+
+    expect(screen.getByRole('button', { name: /Logout/i })).toBeInTheDocument();
+  });
+
+  it('removes token from storage and drops user to LoginGate when Logout is clicked', () => {
+    sessionStorage.setItem('auth_token', 'mock-jwt-token');
+    localStorage.setItem('auth_token', 'mock-jwt-token');
+
+    renderWithQueryClient(<AppContent />);
+
+    const logoutBtn = screen.getByRole('button', { name: /Logout/i });
+    expect(logoutBtn).toBeInTheDocument();
+
+    fireEvent.click(logoutBtn);
+
+    // Verify tokens were cleared from both storage locations
+    expect(sessionStorage.getItem('auth_token')).toBeNull();
+    expect(localStorage.getItem('auth_token')).toBeNull();
+
+    // Verify application immediately drops user back to LoginGate
+    expect(screen.getByText(/Security Operations Login/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Secure Login/i })).toBeInTheDocument();
+  });
 });
 

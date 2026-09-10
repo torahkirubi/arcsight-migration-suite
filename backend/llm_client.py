@@ -90,8 +90,15 @@ class OpenAICompatibleClient(BaseLLMClient):
 
         # Clean and store the dynamically supplied API key
         raw_key = (api_key or "").strip()
+        is_cloud_provider = (
+            "cloud" in provider_name.lower()
+            or "gemini" in provider_name.lower()
+            or "google" in provider_name.lower()
+        )
         if not raw_key and "cloud" in provider_name.lower():
             raw_key = (os.environ.get("OPENAI_API_KEY") or "").strip()
+        elif not raw_key and ("gemini" in provider_name.lower() or "google" in provider_name.lower()):
+            raw_key = (os.environ.get("GEMINI_API_KEY") or os.environ.get("gemini_api_key") or "").strip()
 
         if raw_key.lower().startswith("bearer "):
             raw_key = raw_key[7:].strip()
@@ -99,7 +106,7 @@ class OpenAICompatibleClient(BaseLLMClient):
         # Only fall back to 'not-needed' for local servers; cloud servers preserve empty key to signal missing auth
         if raw_key:
             self.api_key = raw_key
-        elif "cloud" in provider_name.lower():
+        elif is_cloud_provider:
             self.api_key = ""
         else:
             self.api_key = "not-needed"
@@ -116,8 +123,12 @@ class OpenAICompatibleClient(BaseLLMClient):
         key = (api_key_override or "").strip()
         if not key:
             key = (self.api_key or "").strip()
+        if key == "not-needed":
+            return key
         if not key and "cloud" in self.provider_name.lower():
             key = (os.environ.get("OPENAI_API_KEY") or "").strip()
+        if not key and ("gemini" in self.provider_name.lower() or "google" in self.provider_name.lower()):
+            key = (os.environ.get("GEMINI_API_KEY") or os.environ.get("gemini_api_key") or "").strip()
         if key.lower().startswith("bearer "):
             key = key[7:].strip()
         return key
@@ -134,6 +145,15 @@ class OpenAICompatibleClient(BaseLLMClient):
         model = model_override or self.default_model
         endpoint = f"{self.base_url}/chat/completions"
         effective_key = self._resolve_api_key(api_key_override)
+        is_gemini = "gemini" in self.provider_name.lower() or "google" in self.provider_name.lower()
+
+        # If Gemini provider, ensure API key is configured or raise descriptive error
+        if is_gemini:
+            if not effective_key:
+                raise LLMError("Gemini API key is not configured in vault or environment")
+            # For Gemini OpenAI-compatible endpoint, append ?key=<api_key>
+            separator = "&" if "?" in endpoint else "?"
+            endpoint = f"{endpoint}{separator}key={effective_key}"
 
         # Fail fast with clear error if cloud provider is chosen with no API key
         if not effective_key and "cloud" in self.provider_name.lower():
@@ -229,19 +249,23 @@ class OpenAICompatibleClient(BaseLLMClient):
         Check if the endpoint is reachable by querying /v1/models with dynamic API key.
         """
         effective_key = self._resolve_api_key(api_key_override)
+        is_gemini = "gemini" in self.provider_name.lower() or "google" in self.provider_name.lower()
 
         # If it's a cloud service and no key has been entered yet, signal unauthorized gracefully
-        if not effective_key and "cloud" in self.provider_name.lower():
+        if not effective_key and (is_gemini or "cloud" in self.provider_name.lower()):
             return {
                 "status": "unauthorized",
                 "provider": self.provider_name,
                 "base_url": self.base_url,
-                "error": "API key required. Configure API key in Model Engine settings.",
+                "error": "Gemini API key is not configured in vault or environment" if is_gemini else "API key required. Configure API key in Model Engine settings.",
                 "latency_ms": 0,
             }
 
         start = time.time()
         models_endpoint = f"{self.base_url}/models"
+        if is_gemini and effective_key:
+            separator = "&" if "?" in models_endpoint else "?"
+            models_endpoint = f"{models_endpoint}{separator}key={effective_key}"
         headers = {}
         if effective_key:
             headers["Authorization"] = f"Bearer {effective_key}"
@@ -375,6 +399,20 @@ def get_llm_client(
             api_key=clean_key,
             default_model=model_name or "default-model",
             provider_name="Custom Endpoint",
+        )
+    elif provider_clean in ("gemini", "google"):
+        base_url = (
+            custom_base_url
+            or os.environ.get("GEMINI_BASE_URL")
+            or "https://generativelanguage.googleapis.com/v1beta/openai"
+        ).strip().rstrip("/")
+        env_key = (os.environ.get("GEMINI_API_KEY") or "").strip()
+        resolved_key = clean_key if clean_key else env_key
+        return OpenAICompatibleClient(
+            base_url=base_url,
+            api_key=resolved_key,
+            default_model=model_name or "gemini-2.5-flash",
+            provider_name="Google Gemini",
         )
     else:
         # Default fallback to LM Studio

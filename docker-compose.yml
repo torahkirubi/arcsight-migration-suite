@@ -17,6 +17,8 @@ services:
       dockerfile: Dockerfile.backend
     ports:
       - "8001:8001"
+    env_file:
+      - .env
     environment:
       - LM_STUDIO_BASE_URL=http://host.docker.internal:1234/v1
       - DEFAULT_LLM_MODEL=qwen2.5-coder-7b-instruct
@@ -24,12 +26,13 @@ services:
       - SPLUNK_USER=admin
       - SPLUNK_PASSWORD=ChangeMe123!
       - AUDIT_DB_PATH=/app/backend/data/audit_history.db
+      - VAULT_DB_PATH=/app/backend/data/vault.db
       - GIT_READY_OUTPUT_DIR=/app/backend/git_ready_output
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
       - ./git_ready_output:/app/backend/git_ready_output
-      - ./data:/app/backend/data
+      - vault_data:/app/backend/data
     depends_on:
       - splunk
     restart: unless-stopped
@@ -43,3 +46,6 @@ services:
     depends_on:
       - backend
     restart: unless-stopped
+
+volumes:
+  vault_data:

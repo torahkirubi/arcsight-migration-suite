@@ -39,7 +39,7 @@ export const ValidationReport: React.FC<ValidationReportProps> = ({ validation, 
       </div>
 
       {/* Terms Analysis Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-base">
         {/* Required Match Terms */}
         <div className="rounded-lg border border-white/[0.06] bg-[#07080b] p-3 space-y-2">
           <div className="font-medium text-zinc-300 flex items-center justify-between">
@@ -121,11 +121,11 @@ export const ValidationReport: React.FC<ValidationReportProps> = ({ validation, 
 
       {/* Critical Negation Bug Warning */}
       {validation.wrongly_included_as_match.length > 0 && (
-        <div className="p-3.5 rounded-xl border border-rose-500/30 bg-rose-500/[0.06] text-xs text-rose-200 flex items-start gap-2.5">
+        <div className="p-3.5 rounded-xl border border-rose-500/30 bg-rose-500/[0.06] text-base text-rose-200 flex items-start gap-2.5">
           <ShieldAlert className="w-4 h-4 text-rose-400 stroke-[2] shrink-0 mt-0.5" />
           <div className="leading-relaxed">
             <span className="font-semibold text-rose-100">Dangerous Negation Bug Detected:</span> Terms{' '}
-            <code className="font-mono font-semibold text-rose-300 px-1 py-0.5 rounded bg-rose-900/30 border border-rose-500/20">
+            <code className="font-mono font-semibold text-rose-300 px-1.5 py-0.5 rounded bg-rose-900/30 border border-rose-500/20 text-sm leading-relaxed">
               {validation.wrongly_included_as_match.join(', ')}
             </code>{' '}
             are included in the query without negation. Alerts would fire on activities intended to be filtered out.

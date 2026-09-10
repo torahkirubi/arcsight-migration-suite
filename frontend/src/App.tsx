@@ -19,7 +19,9 @@ const queryClient = new QueryClient({
 });
 
 export const AppContent: React.FC = () => {
-  const [token, setToken] = useState<string | null>(sessionStorage.getItem('auth_token'));
+  const [token, setToken] = useState<string | null>(
+    sessionStorage.getItem('auth_token') || localStorage.getItem('auth_token')
+  );
 
   const [llmConfig, setLlmConfig] = useState<LLMConfig>({
     provider: 'lm_studio',
@@ -30,6 +32,12 @@ export const AppContent: React.FC = () => {
   const [activeTab, setActiveTab] = useState<TabType>('translate');
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isAuditLogOpen, setIsAuditLogOpen] = useState(false);
+
+  const handleLogout = () => {
+    sessionStorage.removeItem('auth_token');
+    localStorage.removeItem('auth_token');
+    setToken(null);
+  };
 
   if (!token) {
     return <LoginGate onLoginSuccess={setToken} />;
@@ -44,6 +52,7 @@ export const AppContent: React.FC = () => {
         onSelectTab={setActiveTab}
         onOpenSettings={() => setIsSettingsOpen(true)}
         onOpenAuditLog={() => setIsAuditLogOpen(true)}
+        onLogout={handleLogout}
       />
 
       {/* Main Workspace */}

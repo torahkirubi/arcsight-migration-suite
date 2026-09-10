@@ -14,9 +14,12 @@ Provides endpoints for:
 import asyncio
 from datetime import datetime, timezone
 import json
+import logging
 import os
 import time
 from typing import Any, Dict, List, Optional
+
+logger = logging.getLogger(__name__)
 
 try:
     from pydantic import BaseModel, Field
@@ -1234,8 +1237,10 @@ async def diagnose_telemetry_noise(
 ) -> Optional[Dict[str, Any]]:
     """Analyzes sample telemetry events via LLM to extract noise diagnostics."""
     if not sample_records or len(sample_records) == 0:
+        logger.warning("Diagnostics pipeline skipped: sample_records is empty")
         return None
     if not llm_client:
+        logger.warning("Diagnostics pipeline skipped: llm_client is None")
         return None
 
     prompt = (
@@ -1261,6 +1266,7 @@ async def diagnose_telemetry_noise(
             )
 
         if not raw_response or not isinstance(raw_response, str):
+            logger.error(f"Diagnostics pipeline failed: LLM response empty or non-string: {raw_response!r}")
             return None
 
         cleaned = raw_response.strip()
@@ -1272,8 +1278,14 @@ async def diagnose_telemetry_noise(
                 lines = lines[:-1]
             cleaned = "\n".join(lines).strip()
 
-        parsed = json.loads(cleaned)
+        try:
+            parsed = json.loads(cleaned)
+        except Exception as json_err:
+            logger.error(f"Diagnostics pipeline failed: JSON parsing error on raw LLM output: {json_err}. Raw output:\n{cleaned}", exc_info=True)
+            return None
+
         if not isinstance(parsed, dict):
+            logger.error(f"Diagnostics pipeline failed: Parsed JSON is not a dictionary: {parsed!r}")
             return None
 
         noise_source = str(parsed.get("noise_source", "Unknown Noise Source"))
@@ -1292,7 +1304,8 @@ async def diagnose_telemetry_noise(
             "affected_entities": affected_entities,
             "mitigation_steps": mitigation_steps,
         }
-    except Exception:
+    except Exception as e:
+        logger.error(f"Diagnostics pipeline failed: {e}", exc_info=True)
         return None
 
 
@@ -1364,7 +1377,8 @@ async def tune_telemetry(
             sentinel_res = sentinel_client.execute_query(kql_query)
         else:
             sentinel_res = sentinel_client.execute_kql_query(kql_query)
-    except Exception:
+    except Exception as e:
+        logger.error(f"Diagnostics pipeline failed: Sentinel query execution error: {e}", exc_info=True)
         sentinel_res = {"row_count": 0, "sample_records": []}
 
     if isinstance(sentinel_res, dict):
@@ -1393,15 +1407,48 @@ async def tune_telemetry(
     noise_diagnostics = None
     if sample_records and len(sample_records) > 0:
         try:
-            llm_client = get_llm_client(provider="gemini")
+            # Case-insensitive resolution from vault, fallback to env
+            gemini_key = None
+            for candidate_key in ("GEMINI_API_KEY", "gemini_api_key", "Gemini_API_Key", "gemini_key", "GEMINI_KEY"):
+                try:
+                    val = vault.get_secret(candidate_key)
+                    if val and val.strip():
+                        gemini_key = val.strip()
+                        break
+                except Exception as lookup_err:
+                    logger.debug(f"Vault secret lookup for '{candidate_key}' failed: {lookup_err}")
+
+            if not gemini_key:
+                gemini_key = (
+                    os.getenv("GEMINI_API_KEY")
+                    or os.getenv("gemini_api_key")
+                    or os.getenv("GEMINI_KEY")
+                    or os.getenv("gemini_key")
+                    or ""
+                ).strip()
+
+            if gemini_key:
+                logger.debug(f"Found Gemini API key with length: {len(gemini_key)}")
+            else:
+                logger.debug("No Gemini API key found in vault or environment")
+
+            llm_client = get_llm_client(provider="gemini", api_key=gemini_key)
             if llm_client:
                 noise_diagnostics = await diagnose_telemetry_noise(
                     raw_kql=kql_query,
                     sample_records=sample_records,
                     llm_client=llm_client,
                 )
-        except Exception:
+            else:
+                logger.error("Diagnostics pipeline failed: get_llm_client returned None for provider 'gemini'")
+        except Exception as e:
+            logger.error(f"Diagnostics pipeline failed: {e}", exc_info=True)
             noise_diagnostics = None
+    else:
+        logger.warning(
+            f"Diagnostics pipeline skipped: sample_records is empty ({baseline_count} events). "
+            f"kql_query: {kql_query[:150]}"
+        )
 
     tuned_kql = None
     if noise_diagnostics:
@@ -1411,7 +1458,8 @@ async def tune_telemetry(
         if affected_entities:
             try:
                 tuned_kql = apply_exclusions(raw_kql=kql_query, entities=affected_entities)
-            except Exception:
+            except Exception as e:
+                logger.error(f"Diagnostics pipeline failed: apply_exclusions error: {e}", exc_info=True)
                 tuned_kql = None
 
     return {

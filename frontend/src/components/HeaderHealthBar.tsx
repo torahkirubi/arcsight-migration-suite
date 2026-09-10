@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { fetchHealth, LLMConfig } from '../api/client';
-import { Shield, Server, Cpu, Database, RefreshCw, History, SlidersHorizontal, Settings, Activity } from 'lucide-react';
+import { Shield, Server, Cpu, Database, RefreshCw, History, SlidersHorizontal, Settings, Activity, LogOut } from 'lucide-react';
 
 export type TabType = 'translate' | 'tuning' | 'settings';
 
@@ -11,6 +11,7 @@ interface HeaderHealthBarProps {
   onOpenAuditLog: () => void;
   activeTab?: TabType;
   onSelectTab?: (tab: TabType) => void;
+  onLogout?: () => void;
 }
 
 export const HeaderHealthBar: React.FC<HeaderHealthBarProps> = ({
@@ -19,8 +20,15 @@ export const HeaderHealthBar: React.FC<HeaderHealthBarProps> = ({
   onOpenAuditLog,
   activeTab = 'translate',
   onSelectTab,
+  onLogout,
 }) => {
   const [showTooltip, setShowTooltip] = useState<string | null>(null);
+
+  const handleLogout = () => {
+    localStorage.removeItem('auth_token');
+    sessionStorage.removeItem('auth_token');
+    onLogout?.();
+  };
 
   // Background health poll every 30 seconds
   const { data, refetch, isFetching } = useQuery({
@@ -266,6 +274,21 @@ export const HeaderHealthBar: React.FC<HeaderHealthBarProps> = ({
               <span>Settings</span>
             </button>
           </nav>
+
+          {/* Subtle Divider */}
+          <div className="hidden sm:block w-[1px] h-5 bg-white/[0.08] mx-0.5" />
+
+          {/* Logout Action */}
+          <button
+            type="button"
+            onClick={handleLogout}
+            className="flex items-center gap-2 px-3 py-1.5 rounded-xl border border-white/[0.08] bg-white/[0.02] hover:bg-rose-500/10 hover:border-rose-500/30 text-zinc-400 hover:text-rose-300 text-xs font-medium transition-all duration-150 cursor-pointer"
+            title="Logout of Session"
+            aria-label="Logout"
+          >
+            <LogOut className="w-3.5 h-3.5 stroke-[1.75]" />
+            <span className="hidden sm:inline">Logout</span>
+          </button>
         </div>
       </div>
     </header>

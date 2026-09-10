@@ -8,7 +8,9 @@ from backend.llm_client import (
     OpenAICompatibleClient,
     get_llm_client,
     LLMAuthError,
+    LLMError,
 )
+from unittest.mock import patch, MagicMock, AsyncMock
 
 
 class TestLLMClientAuth(unittest.TestCase):
@@ -71,7 +73,69 @@ class TestLLMClientAuth(unittest.TestCase):
             if old_env:
                 os.environ["OPENAI_API_KEY"] = old_env
 
+    def test_gemini_provider_missing_key_raises_llm_error(self):
+        """Assert that Gemini provider without API key raises LLMError before making request."""
+        old_env = os.environ.get("GEMINI_API_KEY")
+        if "GEMINI_API_KEY" in os.environ:
+            del os.environ["GEMINI_API_KEY"]
+
+        try:
+            client = get_llm_client(provider="gemini", api_key="")
+            import asyncio
+            with self.assertRaises(LLMError) as ctx:
+                asyncio.run(client.complete(prompt="test"))
+            self.assertIn("Gemini API key is not configured in vault or environment", str(ctx.exception))
+        finally:
+            if old_env:
+                os.environ["GEMINI_API_KEY"] = old_env
+
+    def test_gemini_provider_query_param_and_bearer(self):
+        """Assert that Gemini provider includes ?key=<api_key> on endpoint and Authorization header."""
+        from backend.llm_client import HAS_HTTPX
+        import json
+        client = get_llm_client(provider="gemini", api_key="AIzaSy-sample-key-12345")
+        self.assertEqual(client.provider_name, "Google Gemini")
+        self.assertEqual(client.api_key, "AIzaSy-sample-key-12345")
+
+        import asyncio
+
+        if HAS_HTTPX:
+            mock_resp = MagicMock()
+            mock_resp.status_code = 200
+            mock_resp.json.return_value = {
+                "choices": [{"message": {"content": "mock response"}, "finish_reason": "stop"}]
+            }
+
+            with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
+                mock_post.return_value = mock_resp
+                res = asyncio.run(client.complete(prompt="hello"))
+                self.assertEqual(res, "mock response")
+
+                call_args, call_kwargs = mock_post.call_args
+                called_url = call_args[0]
+                called_headers = call_kwargs.get("headers", {})
+
+                # Assert ?key= is appended
+                self.assertIn("key=AIzaSy-sample-key-12345", called_url)
+                # Assert Authorization: Bearer is present
+                self.assertEqual(called_headers.get("Authorization"), "Bearer AIzaSy-sample-key-12345")
+        else:
+            mock_resp = MagicMock()
+            mock_resp.read.return_value = json.dumps({
+                "choices": [{"message": {"content": "mock response"}, "finish_reason": "stop"}]
+            }).encode("utf-8")
+            mock_resp.__enter__.return_value = mock_resp
+
+            with patch("urllib.request.urlopen", return_value=mock_resp) as mock_urlopen:
+                res = asyncio.run(client.complete(prompt="hello"))
+                self.assertEqual(res, "mock response")
+
+                req = mock_urlopen.call_args[0][0]
+                self.assertIn("key=AIzaSy-sample-key-12345", req.full_url)
+                self.assertEqual(req.get_header("Authorization"), "Bearer AIzaSy-sample-key-12345")
+
 
 if __name__ == "__main__":
     unittest.main()
+
 

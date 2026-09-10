@@ -15,6 +15,7 @@ RUN mkdir -p /app/backend/git_ready_output /app/backend/data /app/backend/logs
 ENV PORT=8001
 ENV PYTHONUNBUFFERED=1
 ENV AUDIT_DB_PATH=/app/backend/data/audit_history.db
+ENV VAULT_DB_PATH=/app/backend/data/vault.db
 ENV GIT_READY_OUTPUT_DIR=/app/backend/git_ready_output
 
 EXPOSE 8001
