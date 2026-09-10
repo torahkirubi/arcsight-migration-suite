@@ -360,6 +360,54 @@ class TestTelemetryTunerAPI(unittest.TestCase):
         self.assertIn("For hostnames or machines, ALWAYS use: Computer", NOISE_DIAGNOSTICS_SYSTEM_PROMPT)
         self.assertIn("For usernames, ALWAYS use: AccountName", NOISE_DIAGNOSTICS_SYSTEM_PROMPT)
 
+    def test_tune_telemetry_unpacks_real_records_and_applies_exclusions_without_generic_object(self):
+        """Assert that tune_telemetry unpacks real records from Sentinel and applies exclusions without 'Object'."""
+        mock_sentinel_res = {
+            "row_count": 25,
+            "records": [
+                {"TimeGenerated": "2026-09-10T12:00:00Z", "Computer": "CORP-WS-01", "AccountName": "svc-backup", "EventID": 4625}
+            ]
+        }
+        mock_llm = MagicMock()
+        mock_llm.complete = AsyncMock(return_value=json.dumps({
+            "noise_source": "Automated Backup Account",
+            "affected_entities": ["svc-backup"],
+            "mitigation_steps": ["Exclude svc-backup from alerts"]
+        }))
+
+        with patch.object(SentinelClient, "execute_query", create=True, return_value=mock_sentinel_res), \
+             patch("backend.app.get_llm_client", return_value=mock_llm):
+
+            resp = self.client.post(
+                "/api/telemetry/tune",
+                json={"raw_kql": "SecurityEvent | where EventID == 4625 | summarize count() by AccountName", "current_threshold": 5},
+                headers=self.auth_headers,
+            )
+
+            self.assertEqual(resp.status_code, 200)
+            data = resp.json()
+            tuned_kql = data.get("tuned_kql")
+            self.assertIsNotNone(tuned_kql)
+            self.assertNotIn("where Object", tuned_kql)
+            self.assertIn("where AccountName !in ('svc-backup')", tuned_kql)
+
+    def test_sentinel_client_execute_query_preserves_real_records_from_tables(self):
+        """Assert that Sentinel execute_query unpacks tables before synthetic fallback."""
+        client = SentinelClient("t", "c", "s", "w")
+        mock_kql_res = {
+            "row_count": 1,
+            "tables": [{
+                "name": "PrimaryResult",
+                "columns": [{"name": "TimeGenerated"}, {"name": "Computer"}, {"name": "AccountName"}],
+                "rows": [["2026-09-10T12:00:00Z", "DC-01", "admin-scanner"]]
+            }]
+        }
+        with patch.object(client, "execute_kql_query", return_value=mock_kql_res):
+            res = client.execute_query("SecurityEvent | take 1")
+            self.assertEqual(len(res["sample_records"]), 1)
+            self.assertEqual(res["sample_records"][0]["Computer"], "DC-01")
+            self.assertEqual(res["sample_records"][0]["AccountName"], "admin-scanner")
+
 
 if __name__ == "__main__":
     unittest.main()

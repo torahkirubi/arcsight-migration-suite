@@ -141,6 +141,28 @@ class TestExclusionEngine(unittest.TestCase):
         self.assertEqual(apply_exclusions("", ["10.0.0.5"]).strip(), "")
         self.assertEqual(apply_exclusions(None, ["10.0.0.5"]), "")
 
+    def test_apply_exclusions_default_target_field_is_computer(self):
+        """Assert that apply_exclusions uses 'Computer' by default instead of generic 'Object'."""
+        raw_kql = "SecurityEvent | summarize count()"
+        tuned = apply_exclusions(raw_kql, ["HOST-1", "HOST-2"])
+        self.assertIn("| where Computer !in ('HOST-1', 'HOST-2')", tuned)
+        self.assertNotIn("Object", tuned)
+
+    def test_apply_exclusions_explicit_target_field(self):
+        """Assert that apply_exclusions respects an explicitly specified target_field."""
+        raw_kql = "DeviceProcessEvents | count"
+        tuned = apply_exclusions(raw_kql, ["powershell.exe", "cmd.exe"], target_field="ProcessName")
+        self.assertIn("| where ProcessName !in ('powershell.exe', 'cmd.exe')", tuned)
+        self.assertNotIn("Object", tuned)
+
+    def test_apply_exclusions_detects_account_name_when_query_mentions_account(self):
+        """Assert that apply_exclusions uses 'AccountName' when query mentions AccountName and entities match accounts."""
+        raw_kql = "SecurityEvent | where AccountName != '' | summarize count() by AccountName"
+        tuned = apply_exclusions(raw_kql, ["svc-scanner", "svc-backup"])
+        self.assertIn("| where AccountName !in ('svc-scanner', 'svc-backup')", tuned)
+        self.assertNotIn("Object", tuned)
+        self.assertNotIn("Computer", tuned)
+
 
 if __name__ == "__main__":
     unittest.main()

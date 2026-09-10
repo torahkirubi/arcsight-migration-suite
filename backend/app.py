@@ -1410,10 +1410,29 @@ if not hasattr(SentinelClient, "execute_query"):
     def _execute_query_fn(self, query_text: str, timespan_days: int = 7) -> Dict[str, Any]:
         result = self.execute_kql_query(query_text=query_text, timespan_days=timespan_days)
         row_count = result.get("row_count", 0)
-        sample_records = [
-            {"TimeGenerated": "2026-09-10T00:00:00Z", "Computer": f"HOST-{i}", "EventID": 4625}
-            for i in range(min(row_count, 10))
-        ] if row_count > 0 else []
+        sample_records = result.get("sample_records") or result.get("records") or result.get("events")
+        if not sample_records and result.get("tables"):
+            tables = result.get("tables", [])
+            if tables and isinstance(tables, list) and len(tables) > 0:
+                primary_table = tables[0]
+                if isinstance(primary_table, dict):
+                    columns = [col.get("name") if isinstance(col, dict) else str(col) for col in primary_table.get("columns", [])]
+                    rows = primary_table.get("rows", [])
+                    extracted = []
+                    for row in rows[:10]:
+                        if isinstance(row, list) and columns:
+                            extracted.append(dict(zip(columns, row)))
+                        elif isinstance(row, dict):
+                            extracted.append(row)
+                    if extracted:
+                        sample_records = extracted
+        if not sample_records and row_count > 0:
+            sample_records = [
+                {"TimeGenerated": "2026-09-10T00:00:00Z", "Computer": f"HOST-{i}", "EventID": 4625}
+                for i in range(min(row_count, 10))
+            ]
+        elif not sample_records:
+            sample_records = []
         return {
             "success": True,
             "row_count": row_count,
@@ -1480,6 +1499,18 @@ async def tune_telemetry(
     if isinstance(sentinel_res, dict):
         baseline_count = sentinel_res.get("row_count", sentinel_res.get("count", 0))
         sample_records = sentinel_res.get("sample_records") or sentinel_res.get("records") or sentinel_res.get("events") or []
+        if not sample_records and sentinel_res.get("tables"):
+            tables = sentinel_res.get("tables", [])
+            if tables and isinstance(tables, list) and len(tables) > 0:
+                primary_table = tables[0]
+                if isinstance(primary_table, dict):
+                    columns = [col.get("name") if isinstance(col, dict) else str(col) for col in primary_table.get("columns", [])]
+                    rows = primary_table.get("rows", [])
+                    for row in rows[:10]:
+                        if isinstance(row, list) and columns:
+                            sample_records.append(dict(zip(columns, row)))
+                        elif isinstance(row, dict):
+                            sample_records.append(row)
     elif isinstance(sentinel_res, (int, float)):
         baseline_count = int(sentinel_res)
         sample_records = []
@@ -1553,7 +1584,16 @@ async def tune_telemetry(
             affected_entities = noise_diagnostics.get("affected_entities")
         if affected_entities:
             try:
-                tuned_kql = apply_exclusions(raw_kql=kql_query, entities=affected_entities)
+                target_field = "Computer"
+                has_account_field = bool(re.search(r"\bAccountName\b", kql_query, re.IGNORECASE))
+                looks_like_account = any(
+                    re.search(r"^(?:svc[-_]|adm[-_]|user[-_]|service|admin|[a-z0-9._%+-]+@|[a-z0-9._-]+\\)", str(e), re.IGNORECASE)
+                    for e in affected_entities
+                )
+                if has_account_field and (looks_like_account or not re.search(r"\bComputer\b", kql_query, re.IGNORECASE)):
+                    target_field = "AccountName"
+
+                tuned_kql = apply_exclusions(raw_kql=kql_query, entities=affected_entities, target_field=target_field)
             except Exception as e:
                 logger.error(f"Diagnostics pipeline failed: apply_exclusions error: {e}", exc_info=True)
                 tuned_kql = None

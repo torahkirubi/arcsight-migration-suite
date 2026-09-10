@@ -240,7 +240,22 @@ class SentinelClient:
         """
         result = self.execute_kql_query(query_text=query_text, timespan_days=timespan_days)
         row_count = result.get("row_count", 0)
-        sample_records = result.get("sample_records")
+        sample_records = result.get("sample_records") or result.get("records") or result.get("events")
+        if not sample_records and result.get("tables"):
+            tables = result.get("tables", [])
+            if tables and isinstance(tables, list) and len(tables) > 0:
+                primary_table = tables[0]
+                if isinstance(primary_table, dict):
+                    columns = [col.get("name") if isinstance(col, dict) else str(col) for col in primary_table.get("columns", [])]
+                    rows = primary_table.get("rows", [])
+                    extracted = []
+                    for row in rows[:10]:
+                        if isinstance(row, list) and columns:
+                            extracted.append(dict(zip(columns, row)))
+                        elif isinstance(row, dict):
+                            extracted.append(row)
+                    if extracted:
+                        sample_records = extracted
         if not sample_records and row_count > 0:
             sample_records = [
                 {"TimeGenerated": "2026-09-10T00:00:00Z", "Computer": f"HOST-{i}", "EventID": 4625}

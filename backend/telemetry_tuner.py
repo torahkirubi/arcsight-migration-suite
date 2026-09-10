@@ -45,13 +45,17 @@ def calculate_dynamic_threshold(
     }
 
 
-def apply_exclusions(raw_kql: Optional[str], entities: Optional[List[Any]]) -> str:
+def apply_exclusions(
+    raw_kql: Optional[str],
+    entities: Optional[List[Any]],
+    target_field: str = "Computer",
+) -> str:
     """
     Injects a negative exclusion block for identified entities into a raw KQL query.
 
     If entities is empty, None, or raw_kql is empty, returns raw_kql unchanged.
     Locates the first instance of an aggregate function (| summarize or | count) and injects:
-        | where Object !in ('entity1', 'entity2')
+        | where {target_field} !in ('entity1', 'entity2')
     immediately before the aggregate. If no aggregate function is found, cleanly appends
     the exclusion block to the end of the query.
     """
@@ -66,8 +70,18 @@ def apply_exclusions(raw_kql: Optional[str], entities: Optional[List[Any]]) -> s
     if not cleaned_entities:
         return raw_kql
 
+    effective_field = target_field
+    if effective_field == "Computer":
+        has_account_field = bool(re.search(r"\bAccountName\b", raw_kql, re.IGNORECASE))
+        looks_like_account = any(
+            re.search(r"^(?:svc[-_]|adm[-_]|user[-_]|service|admin|[a-z0-9._%+-]+@|[a-z0-9._-]+\\)", str(e), re.IGNORECASE)
+            for e in cleaned_entities
+        )
+        if has_account_field and (looks_like_account or not re.search(r"\bComputer\b", raw_kql, re.IGNORECASE)):
+            effective_field = "AccountName"
+
     formatted_entities = ", ".join(f"'{e}'" for e in cleaned_entities)
-    exclusion_clause = f"| where Object !in ({formatted_entities})"
+    exclusion_clause = f"| where {effective_field} !in ({formatted_entities})"
 
     # Locate first instance of an aggregate function (| summarize or | count)
     match = re.search(r"(?i)(\|\s*(?:summarize|count)\b)", raw_kql)
