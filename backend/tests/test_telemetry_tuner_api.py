@@ -292,6 +292,72 @@ class TestTelemetryTunerAPI(unittest.TestCase):
             self.assertGreater(data.get("suggested_threshold", 0), 5)
             self.assertIsNone(data.get("noise_diagnostics"))
 
+    def test_diagnose_telemetry_noise_passes_max_tokens_8192(self):
+        """Assert that diagnose_telemetry_noise explicitly requests max_tokens=8192 from LLM."""
+        import asyncio
+        from backend.app import diagnose_telemetry_noise
+
+        mock_llm = MagicMock()
+        mock_llm.complete = AsyncMock(return_value='{"noise_source": "Scanner", "affected_entities": ["h1"], "mitigation_steps": ["step1"]}')
+
+        records = [{"Computer": "HOST-1", "EventID": 4625}]
+        res = asyncio.run(diagnose_telemetry_noise("SecurityEvent", records, mock_llm))
+
+        self.assertIsNotNone(res)
+        mock_llm.complete.assert_called_once()
+        call_kwargs = mock_llm.complete.call_args[1]
+        self.assertEqual(call_kwargs.get("max_tokens"), 8192)
+
+    def test_diagnose_telemetry_noise_markdown_fence_recovery(self):
+        """Assert that diagnose_telemetry_noise cleanly strips markdown code fences."""
+        import asyncio
+        from backend.app import diagnose_telemetry_noise
+
+        fenced_json = """```json
+{
+  "noise_source": "Scheduled Backup Script",
+  "affected_entities": ["SRV-BACKUP-01"],
+  "mitigation_steps": ["| where Computer != 'SRV-BACKUP-01'"]
+}
+```"""
+        mock_llm = MagicMock()
+        mock_llm.complete = AsyncMock(return_value=fenced_json)
+
+        records = [{"Computer": "SRV-BACKUP-01", "EventID": 4625}]
+        res = asyncio.run(diagnose_telemetry_noise("SecurityEvent", records, mock_llm))
+
+        self.assertIsNotNone(res)
+        self.assertEqual(res["noise_source"], "Scheduled Backup Script")
+        self.assertEqual(res["affected_entities"], ["SRV-BACKUP-01"])
+        self.assertEqual(res["mitigation_steps"], ["| where Computer != 'SRV-BACKUP-01'"])
+
+    def test_diagnose_telemetry_noise_aliased_keys_recovery(self):
+        """Assert that diagnose_telemetry_noise defensively handles root_cause, noise_entities, and mitigated_kql aliases."""
+        import asyncio
+        from backend.app import diagnose_telemetry_noise
+
+        aliased_json = json.dumps({
+            "root_cause": "Nessus Vulnerability Scan",
+            "noise_entities": ["192.168.1.100", "192.168.1.101"],
+            "mitigated_kql": "| where IpAddress !in ('192.168.1.100', '192.168.1.101')"
+        })
+        mock_llm = MagicMock()
+        mock_llm.complete = AsyncMock(return_value=aliased_json)
+
+        records = [{"IpAddress": "192.168.1.100"}]
+        res = asyncio.run(diagnose_telemetry_noise("CommonSecurityLog", records, mock_llm))
+
+        self.assertIsNotNone(res)
+        self.assertEqual(res["noise_source"], "Nessus Vulnerability Scan")
+        self.assertEqual(res["affected_entities"], ["192.168.1.100", "192.168.1.101"])
+        self.assertEqual(res["mitigation_steps"], ["| where IpAddress !in ('192.168.1.100', '192.168.1.101')"])
+
+    def test_noise_diagnostics_system_prompt_strict_schema_field_constraint(self):
+        """Assert that NOISE_DIAGNOSTICS_SYSTEM_PROMPT contains the strict schema field constraint."""
+        from backend.app import NOISE_DIAGNOSTICS_SYSTEM_PROMPT
+        self.assertIn("You must ONLY use field names present in the provided sample records schema", NOISE_DIAGNOSTICS_SYSTEM_PROMPT)
+        self.assertIn("Never invent fields like Object or Target", NOISE_DIAGNOSTICS_SYSTEM_PROMPT)
+
 
 if __name__ == "__main__":
     unittest.main()

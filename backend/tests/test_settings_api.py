@@ -152,6 +152,64 @@ class TestSettingsApi(unittest.TestCase):
         self.assertIn("Azure AAD STS endpoint unreachable", str(data.get("error", "")) or str(data.get("message", "")))
         mock_auth.assert_called_once()
 
+    def test_save_llm_settings_gemini(self):
+        """Verify POST /api/settings/llm saves Gemini API key to vault and updates os.environ."""
+        from backend.auth_vault import VaultService
+        import os
+
+        client = TestClient(app)
+        payload = {
+            "provider": "gemini",
+            "api_key": "AIzaSy-test-dynamic-gemini-key-12345",
+            "model_name": "gemini-1.5-flash",
+        }
+        response = client.post("/api/settings/llm", json=payload)
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertTrue(data.get("success", False))
+        self.assertIn("gemini key secured in vault", data.get("message", ""))
+
+        # Verify environment variable was set
+        self.assertEqual(os.environ.get("GEMINI_API_KEY"), "AIzaSy-test-dynamic-gemini-key-12345")
+
+        # Verify vault persistence
+        vault = VaultService()
+        self.assertEqual(vault.get_secret("gemini"), "AIzaSy-test-dynamic-gemini-key-12345")
+
+    def test_save_llm_settings_openai(self):
+        """Verify POST /api/settings/llm saves OpenAI API key to vault and updates os.environ."""
+        from backend.auth_vault import VaultService
+        import os
+
+        client = TestClient(app)
+        payload = {
+            "provider": "cloud_openai",
+            "api_key": "sk-test-dynamic-openai-key-99999",
+            "model_name": "gpt-4o",
+        }
+        response = client.post("/api/settings/llm", json=payload)
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertTrue(data.get("success", False))
+        self.assertIn("cloud_openai key secured in vault", data.get("message", ""))
+
+        # Verify environment variable was set
+        self.assertEqual(os.environ.get("OPENAI_API_KEY"), "sk-test-dynamic-openai-key-99999")
+
+        # Verify vault persistence
+        vault = VaultService()
+        self.assertEqual(vault.get_secret("cloud_openai"), "sk-test-dynamic-openai-key-99999")
+
+    def test_save_llm_settings_empty_key_rejected(self):
+        """Verify POST /api/settings/llm rejects empty API key."""
+        client = TestClient(app)
+        payload = {
+            "provider": "gemini",
+            "api_key": "   ",
+        }
+        response = client.post("/api/settings/llm", json=payload)
+        self.assertIn(response.status_code, (400, 422))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 import json
 import logging
 import os
+import re
 import time
 from typing import Any, Dict, List, Optional
 
@@ -211,6 +212,12 @@ class SentinelSettings(BaseModel):
     client_id: str = ""
     client_secret: str = ""
     workspace_id: str = ""
+
+
+class LLMSettingsPayload(BaseModel):
+    provider: str
+    api_key: str
+    model_name: Optional[str] = None
 
 
 class LLMConfigPayload(BaseModel):
@@ -1170,6 +1177,51 @@ if app is not None:
             "message": "Credentials saved",
         }
 
+    @app.post("/api/settings/llm")
+    async def save_llm_settings(payload: LLMSettingsPayload):
+        """
+        Persists LLM API keys to SQLite vault and immediately updates environment variables.
+        """
+        if not payload.api_key or not payload.api_key.strip():
+            raise HTTPException(status_code=400, detail="API key cannot be empty")
+
+        provider_norm = payload.provider.strip().lower()
+        api_key_clean = payload.api_key.strip()
+
+        vault_service = VaultService()
+        # Save secret under the exact provider passed
+        vault_service.save_secret(service_name=payload.provider, plaintext=api_key_clean)
+
+        # Synchronize Gemini keys and environment
+        if provider_norm in ("gemini", "cloud_gemini", "google"):
+            vault_service.save_secret(service_name="GEMINI_API_KEY", plaintext=api_key_clean)
+            vault_service.save_secret(service_name="gemini_api_key", plaintext=api_key_clean)
+            os.environ["GEMINI_API_KEY"] = api_key_clean
+
+        # Synchronize OpenAI keys and environment
+        if provider_norm in ("openai", "cloud_openai"):
+            vault_service.save_secret(service_name="OPENAI_API_KEY", plaintext=api_key_clean)
+            vault_service.save_secret(service_name="openai_api_key", plaintext=api_key_clean)
+            os.environ["OPENAI_API_KEY"] = api_key_clean
+
+        return {
+            "success": True,
+            "message": f"{payload.provider} key secured in vault",
+        }
+
+    @app.get("/api/settings/llm")
+    async def get_llm_settings():
+        """
+        Returns masked status of configured LLM API keys in vault and environment.
+        """
+        vault_service = VaultService()
+        gemini_key = vault_service.get_secret("GEMINI_API_KEY") or os.environ.get("GEMINI_API_KEY")
+        openai_key = vault_service.get_secret("OPENAI_API_KEY") or os.environ.get("OPENAI_API_KEY")
+        return {
+            "gemini_configured": bool(gemini_key),
+            "openai_configured": bool(openai_key),
+        }
+
     @app.post("/api/settings/sentinel/test")
     async def test_sentinel_connection(payload: SentinelSettings):
         """
@@ -1221,6 +1273,8 @@ class TuneResponse(BaseModel):
 NOISE_DIAGNOSTICS_SYSTEM_PROMPT = """You are an expert Security Operations Center (SOC) Detection Engineer and Microsoft Sentinel Specialist.
 Your task is to analyze raw sample telemetry events triggering a detection rule and identify the root cause of the noise.
 
+Strict Constraint: You must ONLY use field names present in the provided sample records schema (e.g., Computer, AccountName, CommandLine, ProcessName). Never invent fields like Object or Target.
+
 Analyze the events and output ONLY a valid, raw JSON object with this exact schema (no markdown, no backticks, no markdown code fence):
 {
   "noise_source": "<Brief description of the source causing noise, e.g. Vulnerability Scanner, Scheduled Backup Script, Health Probe>",
@@ -1257,12 +1311,14 @@ async def diagnose_telemetry_noise(
                 prompt=prompt,
                 system_prompt=NOISE_DIAGNOSTICS_SYSTEM_PROMPT,
                 temperature=0.1,
+                max_tokens=8192,
             )
         else:
             raw_response = llm_client.complete(
                 prompt=prompt,
                 system_prompt=NOISE_DIAGNOSTICS_SYSTEM_PROMPT,
                 temperature=0.1,
+                max_tokens=8192,
             )
 
         if not raw_response or not isinstance(raw_response, str):
@@ -1270,34 +1326,72 @@ async def diagnose_telemetry_noise(
             return None
 
         cleaned = raw_response.strip()
-        if cleaned.startswith("```"):
-            lines = cleaned.split("\n")
-            if lines[0].startswith("```"):
-                lines = lines[1:]
-            if lines and lines[-1].strip() == "```":
-                lines = lines[:-1]
-            cleaned = "\n".join(lines).strip()
 
+        # Defensively strip markdown code fences (e.g. ```json ... ``` or ``` ...)
+        if "```" in cleaned:
+            fence_match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", cleaned, re.IGNORECASE)
+            if fence_match:
+                cleaned = fence_match.group(1).strip()
+            else:
+                cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned, flags=re.IGNORECASE).strip()
+                cleaned = re.sub(r"\s*```$", "", cleaned).strip()
+
+        parsed = None
+        # Attempt standard JSON parse
         try:
             parsed = json.loads(cleaned)
         except Exception as json_err:
-            logger.error(f"Diagnostics pipeline failed: JSON parsing error on raw LLM output: {json_err}. Raw output:\n{cleaned}", exc_info=True)
-            return None
+            # Fallback 1: Extract first JSON object delimited by { ... }
+            brace_match = re.search(r"(\{[\s\S]*\})", cleaned)
+            if brace_match:
+                try:
+                    parsed = json.loads(brace_match.group(1))
+                except Exception:
+                    pass
 
+        # Fallback 2: Regex key-value extraction for partial/truncated JSON or alternate formatting
         if not isinstance(parsed, dict):
-            logger.error(f"Diagnostics pipeline failed: Parsed JSON is not a dictionary: {parsed!r}")
-            return None
+            parsed = {}
+            ns_match = re.search(r'"(?:noise_source|root_cause)"\s*:\s*"([^"]+)"', cleaned)
+            if ns_match:
+                parsed["noise_source"] = ns_match.group(1)
 
-        noise_source = str(parsed.get("noise_source", "Unknown Noise Source"))
-        affected_entities = parsed.get("affected_entities", [])
+            ent_match = re.search(r'"(?:affected_entities|noise_entities)"\s*:\s*\[([^\]]*)\]', cleaned)
+            if ent_match:
+                parsed["affected_entities"] = re.findall(r'"([^"]+)"', ent_match.group(1))
+
+            mit_match = re.search(r'"(?:mitigation_steps|mitigated_kql)"\s*:\s*(\[[^\]]*\]|"[^"]+")', cleaned)
+            if mit_match:
+                val = mit_match.group(1)
+                if val.startswith("["):
+                    parsed["mitigation_steps"] = re.findall(r'"([^"]+)"', val)
+                else:
+                    parsed["mitigation_steps"] = [val.strip('"')]
+
+        # Extract values with support for alternate aliases
+        noise_source = str(parsed.get("noise_source") or parsed.get("root_cause") or "").strip()
+        if not noise_source:
+            noise_source = "Unknown Noise Source"
+
+        affected_entities = parsed.get("affected_entities") or parsed.get("noise_entities") or []
         if not isinstance(affected_entities, list):
             affected_entities = [str(affected_entities)]
-        affected_entities = [str(e) for e in affected_entities]
+        affected_entities = [str(e).strip() for e in affected_entities if str(e).strip()]
 
-        mitigation_steps = parsed.get("mitigation_steps", [])
-        if not isinstance(mitigation_steps, list):
+        mitigation_steps = parsed.get("mitigation_steps") or []
+        if not mitigation_steps and "mitigated_kql" in parsed:
+            mkql = parsed.get("mitigated_kql")
+            if isinstance(mkql, list):
+                mitigation_steps = [str(k) for k in mkql]
+            elif mkql:
+                mitigation_steps = [str(mkql)]
+        elif not isinstance(mitigation_steps, list):
             mitigation_steps = [str(mitigation_steps)]
-        mitigation_steps = [str(s) for s in mitigation_steps]
+        mitigation_steps = [str(s).strip() for s in mitigation_steps if str(s).strip()]
+
+        if noise_source == "Unknown Noise Source" and not affected_entities and not mitigation_steps:
+            logger.error(f"Diagnostics pipeline failed: could not extract noise diagnostics from raw output:\n{raw_response}")
+            return None
 
         return {
             "noise_source": noise_source,

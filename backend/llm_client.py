@@ -15,8 +15,11 @@ Features:
 import os
 import json
 import time
+import logging
 from typing import Any, Dict, List, Optional
 from abc import ABC, abstractmethod
+
+logger = logging.getLogger(__name__)
 
 try:
     import httpx
@@ -138,7 +141,7 @@ class OpenAICompatibleClient(BaseLLMClient):
         prompt: str,
         system_prompt: str = "",
         temperature: float = 0.1,
-        max_tokens: int = 4096,
+        max_tokens: int = 8192,
         model_override: Optional[str] = None,
         api_key_override: Optional[str] = None,
     ) -> str:
@@ -172,6 +175,7 @@ class OpenAICompatibleClient(BaseLLMClient):
             "messages": messages,
             "temperature": temperature,
             "max_tokens": max_tokens,
+            "max_completion_tokens": max_tokens,
         }
 
         headers = {
@@ -235,13 +239,18 @@ class OpenAICompatibleClient(BaseLLMClient):
 
         choice = choices[0]
         finish_reason = choice.get("finish_reason")
+        content = choice.get("message", {}).get("content", "") or ""
         if finish_reason == "length":
-            raise LLMTruncationError(
-                f"{self.provider_name} response was truncated (finish_reason='length'). "
-                "Consider increasing max_tokens or reducing rule context size."
+            logger.warning(
+                f"{self.provider_name} response hit token boundary (finish_reason='length'). "
+                f"Returning accumulated content (length: {len(content)})."
             )
+            if not content.strip():
+                raise LLMTruncationError(
+                    f"{self.provider_name} response was truncated and empty (finish_reason='length'). "
+                    "Consider increasing max_tokens or reducing rule context size."
+                )
 
-        content = choice.get("message", {}).get("content", "")
         return content.strip()
 
     async def health_check(self, api_key_override: Optional[str] = None) -> Dict[str, Any]:

@@ -447,3 +447,44 @@ export async function fetchAuditLog(
   return res.json();
 }
 
+export interface LLMSettingsPayload {
+  provider: string;
+  api_key: string;
+  model_name?: string;
+}
+
+export interface LLMSettingsResponse {
+  success: boolean;
+  message: string;
+}
+
+export async function saveLLMSettings(
+  provider: string,
+  apiKey: string,
+  modelName?: string
+): Promise<LLMSettingsResponse> {
+  const res = await fetch(`${API_BASE}/settings/llm`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      provider,
+      api_key: apiKey,
+      model_name: modelName,
+    }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || `Failed to save LLM settings: HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function getLLMSettings(provider: string): Promise<{ success: boolean; provider: string; has_key: boolean; model_name?: string }> {
+  const res = await fetch(`${API_BASE}/settings/llm?provider=${encodeURIComponent(provider)}`);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || `Failed to fetch LLM settings: HTTP ${res.status}`);
+  }
+  return res.json();
+}
+

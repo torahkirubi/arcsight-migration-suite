@@ -12,6 +12,7 @@ Provides:
 """
 
 import asyncio
+import base64
 from datetime import datetime, timedelta, timezone
 import hashlib
 import json
@@ -342,8 +343,10 @@ class VaultService:
         if encryption_key is None:
             encryption_key = os.environ.get("VAULT_MASTER_KEY")
             if not encryption_key:
-                # Deterministic default key for tests if not provided
-                encryption_key = Fernet.generate_key().decode("utf-8")
+                # Deterministic fallback key derived from constant seed for environments without VAULT_MASTER_KEY
+                encryption_key = base64.urlsafe_b64encode(
+                    hashlib.sha256(b"arcsight-vault-master-key-default-seed-2026").digest()
+                ).decode("utf-8")
 
         if isinstance(encryption_key, str):
             encryption_key = encryption_key.encode("utf-8")

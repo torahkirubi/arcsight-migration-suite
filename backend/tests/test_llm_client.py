@@ -134,6 +134,92 @@ class TestLLMClientAuth(unittest.TestCase):
                 self.assertIn("key=AIzaSy-sample-key-12345", req.full_url)
                 self.assertEqual(req.get_header("Authorization"), "Bearer AIzaSy-sample-key-12345")
 
+    def test_default_max_tokens_and_completion_tokens_in_payload(self):
+        """Ensure complete() defaults to max_tokens=8192 and sends both max_tokens and max_completion_tokens."""
+        from backend.llm_client import HAS_HTTPX
+        import json
+        import asyncio
+
+        client = get_llm_client(provider="lm_studio")
+        if HAS_HTTPX:
+            mock_resp = MagicMock()
+            mock_resp.status_code = 200
+            mock_resp.json.return_value = {
+                "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}]
+            }
+            with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
+                mock_post.return_value = mock_resp
+                asyncio.run(client.complete(prompt="hello"))
+                payload = mock_post.call_args[1]["json"]
+                self.assertEqual(payload.get("max_tokens"), 8192)
+                self.assertEqual(payload.get("max_completion_tokens"), 8192)
+        else:
+            mock_resp = MagicMock()
+            mock_resp.read.return_value = json.dumps({
+                "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}]
+            }).encode("utf-8")
+            mock_resp.__enter__.return_value = mock_resp
+            with patch("urllib.request.urlopen", return_value=mock_resp) as mock_urlopen:
+                asyncio.run(client.complete(prompt="hello"))
+                req = mock_urlopen.call_args[0][0]
+                payload = json.loads(req.data.decode("utf-8"))
+                self.assertEqual(payload.get("max_tokens"), 8192)
+                self.assertEqual(payload.get("max_completion_tokens"), 8192)
+
+    def test_finish_reason_length_returns_accumulated_content(self):
+        """Ensure finish_reason='length' returns accumulated content without error if content is non-empty."""
+        from backend.llm_client import HAS_HTTPX
+        import json
+        import asyncio
+
+        client = get_llm_client(provider="lm_studio")
+        if HAS_HTTPX:
+            mock_resp = MagicMock()
+            mock_resp.status_code = 200
+            mock_resp.json.return_value = {
+                "choices": [{"message": {"content": '{"noise_source": "scanner"}'}, "finish_reason": "length"}]
+            }
+            with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
+                mock_post.return_value = mock_resp
+                res = asyncio.run(client.complete(prompt="hello"))
+                self.assertEqual(res, '{"noise_source": "scanner"}')
+        else:
+            mock_resp = MagicMock()
+            mock_resp.read.return_value = json.dumps({
+                "choices": [{"message": {"content": '{"noise_source": "scanner"}'}, "finish_reason": "length"}]
+            }).encode("utf-8")
+            mock_resp.__enter__.return_value = mock_resp
+            with patch("urllib.request.urlopen", return_value=mock_resp):
+                res = asyncio.run(client.complete(prompt="hello"))
+                self.assertEqual(res, '{"noise_source": "scanner"}')
+
+    def test_finish_reason_length_raises_when_content_empty(self):
+        """Ensure finish_reason='length' raises LLMTruncationError if content is empty."""
+        from backend.llm_client import HAS_HTTPX, LLMTruncationError
+        import json
+        import asyncio
+
+        client = get_llm_client(provider="lm_studio")
+        if HAS_HTTPX:
+            mock_resp = MagicMock()
+            mock_resp.status_code = 200
+            mock_resp.json.return_value = {
+                "choices": [{"message": {"content": "   "}, "finish_reason": "length"}]
+            }
+            with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
+                mock_post.return_value = mock_resp
+                with self.assertRaises(LLMTruncationError):
+                    asyncio.run(client.complete(prompt="hello"))
+        else:
+            mock_resp = MagicMock()
+            mock_resp.read.return_value = json.dumps({
+                "choices": [{"message": {"content": "   "}, "finish_reason": "length"}]
+            }).encode("utf-8")
+            mock_resp.__enter__.return_value = mock_resp
+            with patch("urllib.request.urlopen", return_value=mock_resp):
+                with self.assertRaises(LLMTruncationError):
+                    asyncio.run(client.complete(prompt="hello"))
+
 
 if __name__ == "__main__":
     unittest.main()
