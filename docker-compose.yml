@@ -28,6 +28,18 @@ services:
       - AUDIT_DB_PATH=/app/backend/data/audit_history.db
       - VAULT_DB_PATH=/app/backend/data/vault.db
       - GIT_READY_OUTPUT_DIR=/app/backend/git_ready_output
+      # Microsoft Sentinel / Log Analytics (overrideable via .env)
+      - SENTINEL_WORKSPACE_ID=${SENTINEL_WORKSPACE_ID}
+      - AZURE_WORKSPACE_ID=${AZURE_WORKSPACE_ID}
+      - AZURE_TENANT_ID=${AZURE_TENANT_ID}
+      - AZURE_CLIENT_ID=${AZURE_CLIENT_ID}
+      - AZURE_CLIENT_SECRET=${AZURE_CLIENT_SECRET}
+      # Azure Monitor Logs Ingestion / DCE / DCR
+      - AZURE_LOG_INGEST_CLIENT_ID=${AZURE_LOG_INGEST_CLIENT_ID}
+      - AZURE_LOG_INGEST_SECRET=${AZURE_LOG_INGEST_SECRET}
+      - DCE_INGESTION_ENDPOINT=${DCE_INGESTION_ENDPOINT}
+      - DCR_IMMUTABLE_ID=${DCR_IMMUTABLE_ID}
+      - CUSTOM_STREAM_NAME=${CUSTOM_STREAM_NAME}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
