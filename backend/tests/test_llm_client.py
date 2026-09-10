@@ -135,7 +135,7 @@ class TestLLMClientAuth(unittest.TestCase):
                 self.assertEqual(req.get_header("Authorization"), "Bearer AIzaSy-sample-key-12345")
 
     def test_default_max_tokens_and_completion_tokens_in_payload(self):
-        """Ensure complete() defaults to max_tokens=8192 and sends both max_tokens and max_completion_tokens."""
+        """Ensure complete() defaults to max_tokens=8192 and only sends max_tokens without max_completion_tokens."""
         from backend.llm_client import HAS_HTTPX
         import json
         import asyncio
@@ -152,7 +152,7 @@ class TestLLMClientAuth(unittest.TestCase):
                 asyncio.run(client.complete(prompt="hello"))
                 payload = mock_post.call_args[1]["json"]
                 self.assertEqual(payload.get("max_tokens"), 8192)
-                self.assertEqual(payload.get("max_completion_tokens"), 8192)
+                self.assertNotIn("max_completion_tokens", payload)
         else:
             mock_resp = MagicMock()
             mock_resp.read.return_value = json.dumps({
@@ -164,7 +164,7 @@ class TestLLMClientAuth(unittest.TestCase):
                 req = mock_urlopen.call_args[0][0]
                 payload = json.loads(req.data.decode("utf-8"))
                 self.assertEqual(payload.get("max_tokens"), 8192)
-                self.assertEqual(payload.get("max_completion_tokens"), 8192)
+                self.assertNotIn("max_completion_tokens", payload)
 
     def test_finish_reason_length_returns_accumulated_content(self):
         """Ensure finish_reason='length' returns accumulated content without error if content is non-empty."""
