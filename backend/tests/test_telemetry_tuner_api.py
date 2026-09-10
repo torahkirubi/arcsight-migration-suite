@@ -554,5 +554,65 @@ class TestTelemetryTunerAPI(unittest.TestCase):
         self.assertIn("!in", tuned)
 
 
+    def test_tune_telemetry_with_dictionary_entities_generates_multi_column_exclusions(self):
+        """Assert that /api/telemetry/tune handles structured dictionary entities from LLM and generates multi-column exclusions."""
+        mock_sentinel_res = {
+            "row_count": 100,
+            "sample_records": [
+                {
+                    "TimeGenerated": "2026-09-11T00:00:00Z",
+                    "Computer": "SRV-01.corp.local",
+                    "AccountName": "svc-scanner",
+                    "CommandLine": "net.exe user /domain",
+                }
+            ],
+        }
+        structured_diagnostics = {
+            "noise_source": "Scheduled Scanner Service",
+            "affected_entities": [
+                {"AccountName": "svc-scanner"},
+                {"AccountName": "svc-backup"},
+                {"Computer": "SRV-01.corp.local"},
+                {"CommandLine": "net.exe user /domain"},
+            ],
+            "mitigation_steps": ["Exclude scanner accounts and noisy hosts"],
+        }
+        mock_llm = MagicMock()
+        mock_llm.complete = AsyncMock(return_value=json.dumps(structured_diagnostics))
+
+        raw_query = (
+            "SecurityEvents_CL\n"
+            "| where TimeGenerated > ago(7d)\n"
+            "| summarize AlertCount=count() by Computer, AccountName, ProcessName, CommandLine\n"
+            "| order by AlertCount desc"
+        )
+
+        with patch.object(SentinelClient, "execute_query", create=True, return_value=mock_sentinel_res), \
+             patch("backend.app.get_llm_client", return_value=mock_llm):
+
+            resp = self.client.post(
+                "/api/telemetry/tune",
+                json={"raw_kql": raw_query, "current_threshold": 10},
+                headers=self.auth_headers,
+            )
+
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        tuned_kql = data.get("tuned_kql")
+        self.assertIsNotNone(tuned_kql)
+
+        # Assert multi-column clauses
+        self.assertIn("| where AccountName !in ('svc-scanner', 'svc-backup')", tuned_kql)
+        self.assertIn("| where Computer !in ('SRV-01.corp.local')", tuned_kql)
+        self.assertIn("| where CommandLine !in ('net.exe user /domain')", tuned_kql)
+
+        # Assert no raw dictionary stringification
+        self.assertNotIn("{'AccountName'", tuned_kql)
+        self.assertNotIn("Object", tuned_kql)
+
+        # Negative logic retention
+        self.assertIn("!in", tuned_kql)
+
+
 if __name__ == "__main__":
     unittest.main()

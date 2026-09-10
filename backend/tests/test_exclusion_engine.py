@@ -163,6 +163,92 @@ class TestExclusionEngine(unittest.TestCase):
         self.assertNotIn("Object", tuned)
         self.assertNotIn("Computer", tuned)
 
+    def test_apply_exclusions_dict_entities(self):
+        """Assert that apply_exclusions unpacks dictionary entities into column-specific clauses."""
+        raw_kql = (
+            "SecurityEvents_CL\n"
+            "| where TimeGenerated > ago(7d)\n"
+            "| summarize AlertCount=count() by Computer, AccountName, ProcessName, CommandLine\n"
+            "| order by AlertCount desc"
+        )
+        entities = [
+            {"AccountName": "svc-scanner"},
+            {"AccountName": "svc-backup"},
+            {"Computer": "SRV-01.corp.local"},
+            {"CommandLine": "net.exe user /domain"},
+        ]
+        tuned = apply_exclusions(raw_kql, entities)
+
+        # 1. Assert column-specific clauses are generated
+        self.assertIn("| where AccountName !in ('svc-scanner', 'svc-backup')", tuned)
+        self.assertIn("| where Computer !in ('SRV-01.corp.local')", tuned)
+        self.assertIn("| where CommandLine !in ('net.exe user /domain')", tuned)
+
+        # 2. Assert raw dictionaries are not stringified into KQL
+        self.assertNotIn("{'AccountName'", tuned)
+        self.assertNotIn("Object", tuned)
+
+        # 3. Assert negative logic retention
+        self.assertIn("!in", tuned)
+        self.assertNotRegex(tuned, r"\|\s*where\s+\w+\s+in\s*\(", "Negative logic must not be inverted into inclusive match")
+
+        # 4. Assert placement before summarize
+        summarize_idx = tuned.find("| summarize")
+        self.assertNotEqual(summarize_idx, -1)
+        for clause in [
+            "| where AccountName !in ('svc-scanner', 'svc-backup')",
+            "| where Computer !in ('SRV-01.corp.local')",
+            "| where CommandLine !in ('net.exe user /domain')",
+        ]:
+            clause_idx = tuned.find(clause)
+            self.assertNotEqual(clause_idx, -1, f"Missing clause: {clause}")
+            self.assertLess(clause_idx, summarize_idx, f"Clause must be injected before | summarize: {clause}")
+
+    def test_apply_exclusions_mixed_entities(self):
+        """Assert that apply_exclusions handles a mixed list of dicts and plain strings."""
+        raw_kql = (
+            "SecurityEvents_CL\n"
+            "| summarize count() by Computer, AccountName, CommandLine"
+        )
+        entities = [
+            {"AccountName": "svc-scanner"},
+            "DC-01.corp.local",
+            {"CommandLine": "powershell.exe -enc <base64>"},
+        ]
+        tuned = apply_exclusions(raw_kql, entities)
+
+        self.assertIn("| where AccountName !in ('svc-scanner')", tuned)
+        self.assertIn("| where Computer !in ('DC-01.corp.local')", tuned)
+        self.assertIn("| where CommandLine !in ('powershell.exe -enc <base64>')", tuned)
+        self.assertNotIn("{'AccountName'", tuned)
+
+    def test_apply_exclusions_escapes_single_quotes(self):
+        """Assert that single quotes within entity values are escaped properly."""
+        raw_kql = "SecurityEvents_CL | summarize count()"
+        entities = [
+            {"AccountName": "svc-o'reilly"},
+            {"CommandLine": "cmd.exe /c echo 'test'"},
+        ]
+        tuned = apply_exclusions(raw_kql, entities)
+
+        self.assertIn(r"svc-o\'reilly", tuned)
+        self.assertIn(r"cmd.exe /c echo \'test\'", tuned)
+        self.assertIn("!in", tuned)
+
+    def test_apply_exclusions_handles_stringified_dicts_defensively(self):
+        """Assert that apply_exclusions defensively unpacks stringified dictionaries."""
+        raw_kql = "SecurityEvents_CL | summarize count()"
+        entities = [
+            "{'AccountName': 'svc-scanner'}",
+            '{"Computer": "SRV-02.corp.local"}',
+        ]
+        tuned = apply_exclusions(raw_kql, entities)
+
+        self.assertIn("| where AccountName !in ('svc-scanner')", tuned)
+        self.assertIn("| where Computer !in ('SRV-02.corp.local')", tuned)
+        self.assertNotIn("{'AccountName'", tuned)
+        self.assertNotIn('{"Computer"', tuned)
+
 
 if __name__ == "__main__":
     unittest.main()

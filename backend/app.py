@@ -1253,7 +1253,7 @@ if app is not None:
 
 class NoiseDiagnostics(BaseModel):
     noise_source: str
-    affected_entities: List[str] = Field(default_factory=list)
+    affected_entities: List[Any] = Field(default_factory=list)
     mitigation_steps: List[str] = Field(default_factory=list)
 
 
@@ -1375,10 +1375,15 @@ async def diagnose_telemetry_noise(
         if not noise_source:
             noise_source = "Unknown Noise Source"
 
-        affected_entities = parsed.get("affected_entities") or parsed.get("noise_entities") or []
-        if not isinstance(affected_entities, list):
-            affected_entities = [str(affected_entities)]
-        affected_entities = [str(e).strip() for e in affected_entities if str(e).strip()]
+        raw_entities = parsed.get("affected_entities") or parsed.get("noise_entities") or []
+        if not isinstance(raw_entities, list):
+            raw_entities = [raw_entities]
+        affected_entities = []
+        for e in raw_entities:
+            if isinstance(e, dict):
+                affected_entities.append(e)
+            elif e is not None and str(e).strip():
+                affected_entities.append(str(e).strip())
 
         mitigation_steps = parsed.get("mitigation_steps") or []
         if not mitigation_steps and "mitigated_kql" in parsed:

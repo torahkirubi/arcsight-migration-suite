@@ -45,19 +45,48 @@ def calculate_dynamic_threshold(
     }
 
 
+CANONICAL_FIELDS: Dict[str, str] = {
+    "accountname": "AccountName",
+    "account": "AccountName",
+    "username": "AccountName",
+    "user": "AccountName",
+    "targetaccount": "TargetAccount",
+    "computer": "Computer",
+    "computername": "Computer",
+    "hostname": "Computer",
+    "processname": "ProcessName",
+    "process": "ProcessName",
+    "commandline": "CommandLine",
+    "command": "CommandLine",
+    "eventid": "EventID",
+    "ipaddress": "IpAddress",
+}
+
+
+def _normalize_entity_pair(field_name: str, val: Any) -> Optional[tuple]:
+    if val is None:
+        return None
+    s_val = str(val).strip()
+    if not s_val:
+        return None
+    canon_field = CANONICAL_FIELDS.get(field_name.lower(), field_name.strip())
+    # Cleanly escape single quotes without double-escaping
+    clean_val = s_val.replace(r"\'", "'").replace("'", r"\'")
+    return canon_field, clean_val
+
+
 def apply_exclusions(
     raw_kql: Optional[str],
     entities: Optional[List[Any]],
     target_field: str = "Computer",
 ) -> str:
     """
-    Injects a negative exclusion block for identified entities into a raw KQL query.
+    Injects negative exclusion blocks for identified entities into a raw KQL query.
 
-    If entities is empty, None, or raw_kql is empty, returns raw_kql unchanged.
-    Locates the first instance of an aggregate function (| summarize or | count) and injects:
-        | where {target_field} !in ('entity1', 'entity2')
-    immediately before the aggregate. If no aggregate function is found, cleanly appends
-    the exclusion block to the end of the query.
+    Normalizes entities (dictionaries, stringified dictionaries, or plain strings)
+    into column-specific groups and generates clean clauses:
+        | where <Field> !in ('val1', 'val2')
+    injected immediately before aggregate clauses (| summarize or | count) or appended cleanly.
     """
     if raw_kql is None:
         return ""
@@ -66,22 +95,103 @@ def apply_exclusions(
     if not entities:
         return raw_kql
 
-    cleaned_entities = [str(e) for e in entities if e is not None and str(e).strip()]
-    if not cleaned_entities:
+    grouped_exclusions: Dict[str, List[str]] = {}
+
+    def _add_pair(f: str, v: str):
+        if f not in grouped_exclusions:
+            grouped_exclusions[f] = []
+        if v not in grouped_exclusions[f]:
+            grouped_exclusions[f].append(v)
+
+    for item in entities:
+        if item is None:
+            continue
+
+        # Handle dictionaries directly
+        if isinstance(item, dict):
+            # Check for {"field": ..., "value": ...} pattern
+            if "field" in item and "value" in item:
+                pair = _normalize_entity_pair(str(item["field"]), item["value"])
+                if pair:
+                    _add_pair(pair[0], pair[1])
+            elif "name" in item and "type" in item:
+                pair = _normalize_entity_pair(str(item["type"]), item["name"])
+                if pair:
+                    _add_pair(pair[0], pair[1])
+            else:
+                for k, v in item.items():
+                    if isinstance(v, (list, tuple, set)):
+                        for sub_v in v:
+                            pair = _normalize_entity_pair(str(k), sub_v)
+                            if pair:
+                                _add_pair(pair[0], pair[1])
+                    else:
+                        pair = _normalize_entity_pair(str(k), v)
+                        if pair:
+                            _add_pair(pair[0], pair[1])
+            continue
+
+        # Handle string or primitive item
+        str_item = str(item).strip()
+        if not str_item:
+            continue
+
+        # Defensive unpacking for stringified dictionaries (e.g. "{'AccountName': 'svc-scanner'}")
+        if str_item.startswith("{") and str_item.endswith("}"):
+            parsed_dict = None
+            try:
+                import ast
+                parsed = ast.literal_eval(str_item)
+                if isinstance(parsed, dict):
+                    parsed_dict = parsed
+            except Exception:
+                pass
+            if parsed_dict is None:
+                try:
+                    import json
+                    parsed = json.loads(str_item)
+                    if isinstance(parsed, dict):
+                        parsed_dict = parsed
+                except Exception:
+                    pass
+
+            if isinstance(parsed_dict, dict):
+                for k, v in parsed_dict.items():
+                    if isinstance(v, (list, tuple, set)):
+                        for sub_v in v:
+                            pair = _normalize_entity_pair(str(k), sub_v)
+                            if pair:
+                                _add_pair(pair[0], pair[1])
+                    else:
+                        pair = _normalize_entity_pair(str(k), v)
+                        if pair:
+                            _add_pair(pair[0], pair[1])
+                continue
+
+        # Plain string entity: resolve field using heuristics / target_field
+        effective_field = target_field
+        if effective_field == "Computer":
+            has_account_field = bool(re.search(r"\bAccountName\b", raw_kql, re.IGNORECASE))
+            looks_like_account = bool(re.search(
+                r"^(?:svc[-_]|adm[-_]|user[-_]|service|admin|[a-z0-9._%+-]+@|[a-z0-9._-]+\\)",
+                str_item,
+                re.IGNORECASE,
+            ))
+            if has_account_field and (looks_like_account or not re.search(r"\bComputer\b", raw_kql, re.IGNORECASE)):
+                effective_field = "AccountName"
+
+        pair = _normalize_entity_pair(effective_field, str_item)
+        if pair:
+            _add_pair(pair[0], pair[1])
+
+    if not grouped_exclusions:
         return raw_kql
 
-    effective_field = target_field
-    if effective_field == "Computer":
-        has_account_field = bool(re.search(r"\bAccountName\b", raw_kql, re.IGNORECASE))
-        looks_like_account = any(
-            re.search(r"^(?:svc[-_]|adm[-_]|user[-_]|service|admin|[a-z0-9._%+-]+@|[a-z0-9._-]+\\)", str(e), re.IGNORECASE)
-            for e in cleaned_entities
-        )
-        if has_account_field and (looks_like_account or not re.search(r"\bComputer\b", raw_kql, re.IGNORECASE)):
-            effective_field = "AccountName"
-
-    formatted_entities = ", ".join(f"'{e}'" for e in cleaned_entities)
-    exclusion_clause = f"| where {effective_field} !in ({formatted_entities})"
+    # Build individual column exclusion clauses
+    clauses: List[str] = []
+    for field, values in grouped_exclusions.items():
+        formatted_vals = ", ".join(f"'{v}'" for v in values)
+        clauses.append(f"| where {field} !in ({formatted_vals})")
 
     # Locate first instance of an aggregate function (| summarize or | count)
     match = re.search(r"(?i)(\|\s*(?:summarize|count)\b)", raw_kql)
@@ -91,17 +201,24 @@ def apply_exclusions(
         if line_start != -1:
             indent = raw_kql[line_start + 1 : idx]
             if indent.strip() == "":
-                return f"{raw_kql[:line_start + 1]}{indent}{exclusion_clause}\n{raw_kql[line_start + 1:]}"
+                indented_block = "\n".join(f"{indent}{c}" for c in clauses)
+                return f"{raw_kql[:line_start + 1]}{indented_block}\n{raw_kql[line_start + 1:]}"
             else:
-                return f"{raw_kql[:idx]}{exclusion_clause}\n{raw_kql[idx:]}"
+                block = "\n".join(clauses)
+                return f"{raw_kql[:idx]}{block}\n{raw_kql[idx:]}"
         else:
             if raw_kql[:idx].strip():
-                return f"{raw_kql[:idx]}{exclusion_clause} {raw_kql[idx:]}"
+                joined_clauses = " ".join(clauses)
+                return f"{raw_kql[:idx]}{joined_clauses} {raw_kql[idx:]}"
             else:
-                return f"{exclusion_clause}\n{raw_kql}"
+                block = "\n".join(clauses)
+                return f"{block}\n{raw_kql}"
     else:
         if "\n" in raw_kql:
-            return f"{raw_kql.rstrip()}\n{exclusion_clause}"
+            block = "\n".join(clauses)
+            return f"{raw_kql.rstrip()}\n{block}"
         else:
-            return f"{raw_kql.rstrip()} {exclusion_clause}"
+            joined_clauses = " ".join(clauses)
+            return f"{raw_kql.rstrip()} {joined_clauses}"
+
 
