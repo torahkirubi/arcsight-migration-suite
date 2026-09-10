@@ -355,8 +355,10 @@ class TestTelemetryTunerAPI(unittest.TestCase):
     def test_noise_diagnostics_system_prompt_strict_schema_field_constraint(self):
         """Assert that NOISE_DIAGNOSTICS_SYSTEM_PROMPT contains the strict schema field constraint."""
         from backend.app import NOISE_DIAGNOSTICS_SYSTEM_PROMPT
-        self.assertIn("You must ONLY use field names present in the provided sample records schema", NOISE_DIAGNOSTICS_SYSTEM_PROMPT)
-        self.assertIn("Never invent fields like Object or Target", NOISE_DIAGNOSTICS_SYSTEM_PROMPT)
+        self.assertIn('NEVER use generic placeholder field names such as "Object", "Entity", or "Target"', NOISE_DIAGNOSTICS_SYSTEM_PROMPT)
+        self.assertIn("You must ONLY use real column names present in the input query and sample records", NOISE_DIAGNOSTICS_SYSTEM_PROMPT)
+        self.assertIn("For hostnames or machines, ALWAYS use: Computer", NOISE_DIAGNOSTICS_SYSTEM_PROMPT)
+        self.assertIn("For usernames, ALWAYS use: AccountName", NOISE_DIAGNOSTICS_SYSTEM_PROMPT)
 
 
 if __name__ == "__main__":
