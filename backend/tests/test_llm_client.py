@@ -119,6 +119,8 @@ class TestLLMClientAuth(unittest.TestCase):
                 self.assertIn("key=AIzaSy-sample-key-12345", called_url)
                 # Assert Authorization: Bearer is present
                 self.assertEqual(called_headers.get("Authorization"), "Bearer AIzaSy-sample-key-12345")
+                # Assert x-goog-api-key is present
+                self.assertEqual(called_headers.get("x-goog-api-key"), "AIzaSy-sample-key-12345")
         else:
             mock_resp = MagicMock()
             mock_resp.read.return_value = json.dumps({
@@ -133,6 +135,7 @@ class TestLLMClientAuth(unittest.TestCase):
                 req = mock_urlopen.call_args[0][0]
                 self.assertIn("key=AIzaSy-sample-key-12345", req.full_url)
                 self.assertEqual(req.get_header("Authorization"), "Bearer AIzaSy-sample-key-12345")
+                self.assertEqual(req.get_header("X-goog-api-key"), "AIzaSy-sample-key-12345")
 
     def test_default_max_tokens_and_completion_tokens_in_payload(self):
         """Ensure complete() defaults to max_tokens=8192 and only sends max_tokens without max_completion_tokens."""

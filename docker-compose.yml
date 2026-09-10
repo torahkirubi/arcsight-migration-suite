@@ -28,6 +28,9 @@ services:
       - AUDIT_DB_PATH=/app/backend/data/audit_history.db
       - VAULT_DB_PATH=/app/backend/data/vault.db
       - GIT_READY_OUTPUT_DIR=/app/backend/git_ready_output
+      # LLM Providers (overrideable via .env)
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
       # Microsoft Sentinel / Log Analytics (overrideable via .env)
       - SENTINEL_WORKSPACE_ID=${SENTINEL_WORKSPACE_ID}
       - AZURE_WORKSPACE_ID=${AZURE_WORKSPACE_ID}

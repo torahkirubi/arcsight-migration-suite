@@ -75,6 +75,26 @@ def _normalize_entity_pair(field_name: str, val: Any) -> Optional[tuple]:
     return canon_field, clean_val
 
 
+def _format_compound_dict_clause(d: Dict[str, Any]) -> Optional[str]:
+    """Generates a compound negative expression: | where not (<cond1> and <cond2>)."""
+    conds = []
+    for k, v in d.items():
+        if v is None:
+            continue
+        canon_field = CANONICAL_FIELDS.get(str(k).strip().lower(), str(k).strip())
+        clean_val = str(v).strip().replace(r"\'", "'").replace("'", r"\'")
+        if not clean_val:
+            continue
+        # Use `has` for command line fields and `==` for exact entity fields
+        if canon_field.lower() in ("commandline", "command") or "command" in canon_field.lower():
+            conds.append(f"{canon_field} has '{clean_val}'")
+        else:
+            conds.append(f"{canon_field} == '{clean_val}'")
+    if conds:
+        return f"| where not ({' and '.join(conds)})"
+    return None
+
+
 def apply_exclusions(
     raw_kql: Optional[str],
     entities: Optional[List[Any]],
@@ -83,10 +103,10 @@ def apply_exclusions(
     """
     Injects negative exclusion blocks for identified entities into a raw KQL query.
 
-    Normalizes entities (dictionaries, stringified dictionaries, or plain strings)
-    into column-specific groups and generates clean clauses:
-        | where <Field> !in ('val1', 'val2')
-    injected immediately before aggregate clauses (| summarize or | count) or appended cleanly.
+    Normalizes entities (dictionaries, stringified dictionaries, or plain strings):
+    - Single-key dicts and primitives are grouped by column: | where <Field> !in ('val1', 'val2')
+    - Multi-key compound dicts generate compound clauses: | where not (<field1> == 'v1' and <field2> has 'v2')
+    Injected immediately before aggregate clauses (| summarize or | count) or appended cleanly.
     """
     if raw_kql is None:
         return ""
@@ -95,13 +115,39 @@ def apply_exclusions(
     if not entities:
         return raw_kql
 
-    grouped_exclusions: Dict[str, List[str]] = {}
+    grouped_single_exclusions: Dict[str, List[str]] = {}
+    compound_clauses: List[str] = []
 
-    def _add_pair(f: str, v: str):
-        if f not in grouped_exclusions:
-            grouped_exclusions[f] = []
-        if v not in grouped_exclusions[f]:
-            grouped_exclusions[f].append(v)
+    def _add_single_pair(f: str, v: str):
+        if f not in grouped_single_exclusions:
+            grouped_single_exclusions[f] = []
+        if v not in grouped_single_exclusions[f]:
+            grouped_single_exclusions[f].append(v)
+
+    def _process_dict(d: Dict[str, Any]):
+        if "field" in d and "value" in d and len(d) == 2:
+            pair = _normalize_entity_pair(str(d["field"]), d["value"])
+            if pair:
+                _add_single_pair(pair[0], pair[1])
+        elif "name" in d and "type" in d and len(d) == 2:
+            pair = _normalize_entity_pair(str(d["type"]), d["name"])
+            if pair:
+                _add_single_pair(pair[0], pair[1])
+        elif len(d) == 1:
+            for k, v in d.items():
+                if isinstance(v, (list, tuple, set)):
+                    for sub_v in v:
+                        pair = _normalize_entity_pair(str(k), sub_v)
+                        if pair:
+                            _add_single_pair(pair[0], pair[1])
+                else:
+                    pair = _normalize_entity_pair(str(k), v)
+                    if pair:
+                        _add_single_pair(pair[0], pair[1])
+        elif len(d) > 1:
+            clause = _format_compound_dict_clause(d)
+            if clause and clause not in compound_clauses:
+                compound_clauses.append(clause)
 
     for item in entities:
         if item is None:
@@ -109,26 +155,7 @@ def apply_exclusions(
 
         # Handle dictionaries directly
         if isinstance(item, dict):
-            # Check for {"field": ..., "value": ...} pattern
-            if "field" in item and "value" in item:
-                pair = _normalize_entity_pair(str(item["field"]), item["value"])
-                if pair:
-                    _add_pair(pair[0], pair[1])
-            elif "name" in item and "type" in item:
-                pair = _normalize_entity_pair(str(item["type"]), item["name"])
-                if pair:
-                    _add_pair(pair[0], pair[1])
-            else:
-                for k, v in item.items():
-                    if isinstance(v, (list, tuple, set)):
-                        for sub_v in v:
-                            pair = _normalize_entity_pair(str(k), sub_v)
-                            if pair:
-                                _add_pair(pair[0], pair[1])
-                    else:
-                        pair = _normalize_entity_pair(str(k), v)
-                        if pair:
-                            _add_pair(pair[0], pair[1])
+            _process_dict(item)
             continue
 
         # Handle string or primitive item
@@ -156,16 +183,7 @@ def apply_exclusions(
                     pass
 
             if isinstance(parsed_dict, dict):
-                for k, v in parsed_dict.items():
-                    if isinstance(v, (list, tuple, set)):
-                        for sub_v in v:
-                            pair = _normalize_entity_pair(str(k), sub_v)
-                            if pair:
-                                _add_pair(pair[0], pair[1])
-                    else:
-                        pair = _normalize_entity_pair(str(k), v)
-                        if pair:
-                            _add_pair(pair[0], pair[1])
+                _process_dict(parsed_dict)
                 continue
 
         # Plain string entity: resolve field using heuristics / target_field
@@ -182,16 +200,19 @@ def apply_exclusions(
 
         pair = _normalize_entity_pair(effective_field, str_item)
         if pair:
-            _add_pair(pair[0], pair[1])
+            _add_single_pair(pair[0], pair[1])
 
-    if not grouped_exclusions:
-        return raw_kql
-
-    # Build individual column exclusion clauses
+    # Build ordered list of exclusion clauses
     clauses: List[str] = []
-    for field, values in grouped_exclusions.items():
+    for field, values in grouped_single_exclusions.items():
         formatted_vals = ", ".join(f"'{v}'" for v in values)
         clauses.append(f"| where {field} !in ({formatted_vals})")
+    for cc in compound_clauses:
+        if cc not in clauses:
+            clauses.append(cc)
+
+    if not clauses:
+        return raw_kql
 
     # Locate first instance of an aggregate function (| summarize or | count)
     match = re.search(r"(?i)(\|\s*(?:summarize|count)\b)", raw_kql)

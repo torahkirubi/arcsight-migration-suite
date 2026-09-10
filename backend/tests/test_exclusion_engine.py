@@ -250,6 +250,42 @@ class TestExclusionEngine(unittest.TestCase):
         self.assertNotIn('{"Computer"', tuned)
 
 
+    def test_apply_exclusions_compound_entity_dictionaries(self):
+        """Assert that compound entity dictionaries generate | where not (<cond1> and <cond2>) clauses."""
+        raw_kql = (
+            "SecurityEvents_CL\n"
+            "| where TimeGenerated > ago(7d)\n"
+            "| summarize AlertCount=count() by Computer, AccountName, ProcessName, CommandLine\n"
+            "| order by AlertCount desc"
+        )
+        entities = [
+            {"AccountName": "svc-scanner", "CommandLine": "net.exe user /domain"},
+            {"AccountName": "svc-backup", "CommandLine": "cmd.exe /c whoami"},
+            {"Computer": "DC-01.corp.local"},
+        ]
+        tuned = apply_exclusions(raw_kql, entities)
+
+        # 1. Assert compound negative expressions are generated
+        self.assertIn("| where not (AccountName == 'svc-scanner' and CommandLine has 'net.exe user /domain')", tuned)
+        self.assertIn("| where not (AccountName == 'svc-backup' and CommandLine has 'cmd.exe /c whoami')", tuned)
+        self.assertIn("| where Computer !in ('DC-01.corp.local')", tuned)
+
+        # 2. Assert no literal { or } characters are inside quotes in KQL
+        self.assertNotIn("{'AccountName'", tuned)
+        self.assertNotIn("{'Computer'", tuned)
+        self.assertNotIn("Object", tuned)
+
+        # 3. Assert negative logic retention
+        self.assertIn("not (", tuned)
+        self.assertIn("!in", tuned)
+
+        # 4. Assert placement before summarize
+        summarize_idx = tuned.find("| summarize")
+        self.assertNotEqual(summarize_idx, -1)
+        compound_idx = tuned.find("| where not (AccountName == 'svc-scanner'")
+        self.assertLess(compound_idx, summarize_idx)
+
+
 if __name__ == "__main__":
     unittest.main()
 

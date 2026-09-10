@@ -148,15 +148,25 @@ class OpenAICompatibleClient(BaseLLMClient):
         model = model_override or self.default_model
         endpoint = f"{self.base_url}/chat/completions"
         effective_key = self._resolve_api_key(api_key_override)
-        is_gemini = "gemini" in self.provider_name.lower() or "google" in self.provider_name.lower()
+        if effective_key and effective_key != "not-needed":
+            effective_key = effective_key.strip().strip('"').strip("'")
+            if effective_key.lower().startswith("bearer "):
+                effective_key = effective_key[7:].strip()
+
+        is_gemini = (
+            "gemini" in self.provider_name.lower()
+            or "google" in self.provider_name.lower()
+            or "generativelanguage" in self.base_url.lower()
+        )
 
         # If Gemini provider, ensure API key is configured or raise descriptive error
         if is_gemini:
             if not effective_key:
                 raise LLMError("Gemini API key is not configured in vault or environment")
-            # For Gemini OpenAI-compatible endpoint, append ?key=<api_key>
-            separator = "&" if "?" in endpoint else "?"
-            endpoint = f"{endpoint}{separator}key={effective_key}"
+            # For Gemini OpenAI-compatible endpoint, append ?key=<api_key> if not already present
+            if "key=" not in endpoint:
+                separator = "&" if "?" in endpoint else "?"
+                endpoint = f"{endpoint}{separator}key={effective_key}"
 
         # Fail fast with clear error if cloud provider is chosen with no API key
         if not effective_key and "cloud" in self.provider_name.lower():
@@ -180,8 +190,14 @@ class OpenAICompatibleClient(BaseLLMClient):
         headers = {
             "Content-Type": "application/json",
         }
-        if effective_key:
+        if effective_key and effective_key != "not-needed":
             headers["Authorization"] = f"Bearer {effective_key}"
+            if is_gemini:
+                headers["x-goog-api-key"] = effective_key
+
+        redacted_key = (
+            effective_key[:6] + "..." if effective_key and len(effective_key) > 6 else (effective_key or "<empty>")
+        )
 
         if HAS_HTTPX:
             timeout_cfg = httpx.Timeout(120.0, connect=60.0, read=120.0, write=60.0, pool=60.0)
@@ -199,16 +215,31 @@ class OpenAICompatibleClient(BaseLLMClient):
                     ) from exc
 
                 if response.status_code in (401, 403):
+                    logger.error(
+                        f"Auth error from {self.provider_name} (HTTP {response.status_code}): "
+                        f"endpoint={endpoint}, key_prefix={redacted_key}, response={response.text}"
+                    )
                     raise LLMAuthError(
                         f"401 Unauthorized from {self.provider_name}: Invalid or missing API key. "
-                        f"Response: {response.text[:200]}"
+                        f"URL: {endpoint}, Key: {redacted_key}. Response: {response.text[:200]}"
                     )
                 elif response.status_code == 429:
+                    logger.error(
+                        f"Rate limit from {self.provider_name} (HTTP 429): "
+                        f"endpoint={endpoint}, key_prefix={redacted_key}, response={response.text}"
+                    )
                     raise LLMConnectionError(
                         f"Rate limit exceeded (429) from {self.provider_name}: {response.text[:200]}"
                     )
                 elif response.status_code >= 400:
-                    raise LLMError(f"{self.provider_name} returned error {response.status_code}: {response.text}")
+                    logger.error(
+                        f"{self.provider_name} HTTP {response.status_code}: "
+                        f"endpoint={endpoint}, key_prefix={redacted_key}, response={response.text}"
+                    )
+                    raise LLMError(
+                        f"{self.provider_name} returned error {response.status_code} "
+                        f"(URL: {endpoint}, Key: {redacted_key}): {response.text}"
+                    )
 
                 data = response.json()
         else:
@@ -222,11 +253,24 @@ class OpenAICompatibleClient(BaseLLMClient):
                 with urllib.request.urlopen(req, timeout=120.0) as resp:
                     data = json.loads(resp.read().decode("utf-8"))
             except urllib.error.HTTPError as exc:
+                err_body = ""
+                try:
+                    err_body = exc.read().decode("utf-8")
+                except Exception:
+                    pass
+                logger.error(
+                    f"{self.provider_name} HTTP {exc.code}: "
+                    f"endpoint={endpoint}, key_prefix={redacted_key}, response={err_body}"
+                )
                 if exc.code in (401, 403):
                     raise LLMAuthError(
-                        f"401 Unauthorized from {self.provider_name}: Invalid or missing API key."
+                        f"401 Unauthorized from {self.provider_name}: Invalid or missing API key. "
+                        f"URL: {endpoint}, Key: {redacted_key}. Response: {err_body[:200]}"
                     ) from exc
-                raise LLMError(f"{self.provider_name} returned error {exc.code}") from exc
+                raise LLMError(
+                    f"{self.provider_name} returned error {exc.code} "
+                    f"(URL: {endpoint}, Key: {redacted_key}): {err_body}"
+                ) from exc
             except urllib.error.URLError as exc:
                 raise LLMConnectionError(
                     f"Cannot connect to {self.provider_name} at {self.base_url}. Error: {exc}"
