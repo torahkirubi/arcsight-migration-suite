@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Shield, CheckCircle2, AlertCircle, Loader2, Eye, EyeOff, Sliders } from 'lucide-react';
+import { apiFetch } from '../api/client';
 
 export interface IntegrationSettingsProps {
   onClose?: () => void;
@@ -31,7 +32,7 @@ export const IntegrationSettings: React.FC<IntegrationSettingsProps> = ({
     setIsTesting(true);
     setStatusMessage(null);
     try {
-      const res = await fetch('/api/settings/sentinel/test', {
+      const res = await apiFetch('/settings/sentinel/test', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -69,7 +70,7 @@ export const IntegrationSettings: React.FC<IntegrationSettingsProps> = ({
     setIsSaving(true);
     setSaveMessage(null);
     try {
-      const res = await fetch('/api/settings/sentinel', {
+      const res = await apiFetch('/settings/sentinel', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -274,4 +275,3 @@ export const IntegrationSettings: React.FC<IntegrationSettingsProps> = ({
     </div>
   );
 };
-

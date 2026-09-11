@@ -10,7 +10,7 @@ import {
   Copy,
   Check,
 } from 'lucide-react';
-import { TelemetryTuneResponse } from '../api/client';
+import { apiFetch, TelemetryTuneResponse } from '../api/client';
 import { TelemetryTunerCard } from './TelemetryTunerCard';
 
 export interface TuneResponse extends TelemetryTuneResponse {
@@ -40,7 +40,7 @@ export const StandaloneTuningView: React.FC<StandaloneTuningViewProps> = ({
 
     try {
       const token = sessionStorage.getItem('auth_token') || sessionStorage.getItem('token');
-      const response = await fetch('/api/telemetry/tune', {
+      const response = await apiFetch('/api/telemetry/tune', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -287,4 +287,3 @@ export const StandaloneTuningView: React.FC<StandaloneTuningViewProps> = ({
     </div>
   );
 };
-

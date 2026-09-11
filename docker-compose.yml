@@ -5,7 +5,7 @@ services:
     environment:
       - SPLUNK_START_ARGS=--accept-license
       - SPLUNK_GENERAL_TERMS=--accept-sgt-current-at-splunk-com
-      - SPLUNK_PASSWORD=ChangeMe123!
+      - SPLUNK_PASSWORD=${SPLUNK_PASSWORD:?Set SPLUNK_PASSWORD in .env}
     ports:
       - "8000:8000"
       - "8089:8089"
@@ -24,7 +24,7 @@ services:
       - DEFAULT_LLM_MODEL=qwen2.5-coder-7b-instruct
       - SPLUNK_HOST=https://splunk:8089
       - SPLUNK_USER=admin
-      - SPLUNK_PASSWORD=ChangeMe123!
+      - SPLUNK_PASSWORD=${SPLUNK_PASSWORD:?Set SPLUNK_PASSWORD in .env}
       - AUDIT_DB_PATH=/app/backend/data/audit_history.db
       - VAULT_DB_PATH=/app/backend/data/vault.db
       - GIT_READY_OUTPUT_DIR=/app/backend/git_ready_output

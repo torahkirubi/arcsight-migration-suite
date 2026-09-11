@@ -157,7 +157,7 @@ DEFAULT_LLM_MODEL=qwen2.5-coder-7b-instruct
 # Splunk Enterprise Configuration
 SPLUNK_HOST=https://splunk:8089
 SPLUNK_USER=admin
-SPLUNK_PASSWORD=ChangeMe123!
+SPLUNK_PASSWORD=your_unique_splunk_password
 ```
 
 ### 2. Launch with Docker Compose
@@ -169,7 +169,7 @@ docker compose up --build -d
 Service endpoints:
 - **Frontend Dashboard**: [http://localhost:3000](http://localhost:3000)
 - **Backend API Docs**: [http://localhost:8001/docs](http://localhost:8001/docs)
-- **Splunk Enterprise Web UI**: [http://localhost:8000](http://localhost:8000) *(admin / ChangeMe123!)*
+- **Splunk Enterprise Web UI**: [http://localhost:8000](http://localhost:8000) *(credentials come from `.env`)*
 - **Splunk REST API**: [https://localhost:8089](https://localhost:8089)
 
 ---
@@ -235,4 +235,3 @@ OK
 ## License
 
 This project is licensed under the [MIT License](LICENSE).
-

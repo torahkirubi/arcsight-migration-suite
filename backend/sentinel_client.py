@@ -95,8 +95,8 @@ class SentinelClient:
         """
         Internal token acquisition logic via Azure OAuth endpoint.
         """
-        if not self.tenant_id or not self.client_id:
-            return "mock-token-local"
+        if not self.tenant_id or not self.client_id or not self.client_secret:
+            return ""
         try:
             import httpx
             token_url = f"https://login.microsoftonline.com/{self.tenant_id}/oauth2/v2.0/token"
@@ -110,8 +110,8 @@ class SentinelClient:
             if resp.status_code == 200:
                 return resp.json().get("access_token", "")
         except Exception as e:
-            logger.debug("Token acquisition failed, falling back to mock token: %s", e)
-        return "mock-token-fallback"
+            logger.warning("Sentinel token acquisition failed: %s", e)
+        return ""
 
     def _execute_query(self, kql_query: str) -> List[Dict[str, Any]]:
         """
@@ -257,11 +257,12 @@ class SentinelClient:
         if not sample_records:
             sample_records = []
         return {
-            "success": True,
+            "success": bool(result.get("success", False)),
             "row_count": row_count,
             "sample_records": sample_records,
             "records": sample_records,
             "events": sample_records,
             "timespan_days": timespan_days,
             "query": query_text,
+            "error": result.get("error"),
         }

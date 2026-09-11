@@ -181,9 +181,28 @@ app = FastAPI(
     version="2.0.0",
 )
 
+APP_ENV = os.environ.get("APP_ENV", "development").lower()
+
+def _validate_runtime_security() -> None:
+    if APP_ENV != "production":
+        return
+    required = ("JWT_SECRET_KEY", "VAULT_MASTER_KEY", "ADMIN_PASSWORD")
+    missing = [name for name in required if not os.environ.get(name, "").strip()]
+    if missing:
+        raise RuntimeError(
+            "Production startup blocked: missing required security settings: "
+            + ", ".join(missing)
+        )
+
+_validate_runtime_security()
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        origin.strip()
+        for origin in os.environ.get("CORS_ORIGINS", "http://localhost:3000").split(",")
+        if origin.strip()
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -199,11 +218,6 @@ if hasattr(app, "on_event"):
     @app.on_event("startup")
     def startup_auth_vault():
         init_auth_vault_db()
-
-ACTIVE_INTEGRATIONS: Dict[str, Any] = {
-    "sentinel": {},
-}
-
 
 # --- Pydantic Request Models ---
 
@@ -989,7 +1003,10 @@ if app is not None:
         )
 
     @app.post("/api/translate-direct")
-    async def translate_direct(payload: TranslateDirectRequest):
+    async def translate_direct(
+        payload: TranslateDirectRequest,
+        current_user: Optional[str] = Depends(get_current_user) if HAS_FASTAPI else None,
+    ):
         if payload.deep_mode:
             return StreamingResponse(
                 _stream_translate_direct(payload),
@@ -1003,7 +1020,10 @@ if app is not None:
         return await _execute_translate_direct(payload)
 
     @app.post("/api/validate")
-    async def validate_standalone(payload: ValidateQueryRequest):
+    async def validate_standalone(
+        payload: ValidateQueryRequest,
+        current_user: Optional[str] = Depends(get_current_user) if HAS_FASTAPI else None,
+    ):
         """
         Standalone coverage validation against user-modified queries.
         """
@@ -1016,7 +1036,10 @@ if app is not None:
         return res.to_dict()
 
     @app.post("/api/generate-runbook")
-    async def generate_runbook(payload: GenerateRunbookRequest):
+    async def generate_runbook(
+        payload: GenerateRunbookRequest,
+        current_user: Optional[str] = Depends(get_current_user) if HAS_FASTAPI else None,
+    ):
         """
         Generates threat analysis and Tier-1 triage guide.
         STRICT SAFETY BOUNDARY: MDE Coverage is explicitly excluded from LLM generation.
@@ -1062,7 +1085,10 @@ if app is not None:
         }
 
     @app.post("/api/save-runbook")
-    async def save_runbook(payload: SaveRunbookRequest):
+    async def save_runbook(
+        payload: SaveRunbookRequest,
+        current_user: Optional[str] = Depends(get_current_user) if HAS_FASTAPI else None,
+    ):
         """
         Merges LLM threat analysis, translated queries, and STRICTLY HUMAN MDE verdict,
         then writes a Git-ready .txt runbook to disk.
@@ -1116,7 +1142,10 @@ if app is not None:
 
     @app.post("/api/test-live-splunk")
     @app.post("/api/test-splunk")
-    async def test_live_splunk(payload: LiveSplunkTestRequest):
+    async def test_live_splunk(
+        payload: LiveSplunkTestRequest,
+        current_user: Optional[str] = Depends(get_current_user) if HAS_FASTAPI else None,
+    ):
         """
         Executes a bounded, read-only oneshot search against real Splunk REST API.
         """
@@ -1149,6 +1178,7 @@ if app is not None:
         limit: int = Query(50, ge=1, le=200),
         offset: int = Query(0, ge=0),
         rule_name: Optional[str] = Query(None),
+        current_user: Optional[str] = Depends(get_current_user) if HAS_FASTAPI else None,
     ):
         """
         Returns migration audit history from persistent SQLite store.
@@ -1161,16 +1191,23 @@ if app is not None:
         }
 
     @app.post("/api/settings/sentinel")
-    async def save_sentinel_settings(payload: SentinelSettings):
+    async def save_sentinel_settings(
+        payload: SentinelSettings,
+        current_user: Optional[str] = Depends(get_current_user) if HAS_FASTAPI else None,
+    ):
         """
         Stores Sentinel credentials in the active integration registry.
         """
-        ACTIVE_INTEGRATIONS["sentinel"] = {
-            "tenant_id": payload.tenant_id,
-            "client_id": payload.client_id,
-            "client_secret": payload.client_secret,
-            "workspace_id": payload.workspace_id,
-        }
+        vault_service = VaultService()
+        vault_service.save_secret(
+            service_name="SENTINEL_SETTINGS",
+            plaintext={
+                "tenant_id": payload.tenant_id,
+                "client_id": payload.client_id,
+                "client_secret": payload.client_secret,
+                "workspace_id": payload.workspace_id,
+            },
+        )
         return {
             "status": "success",
             "success": True,
@@ -1178,7 +1215,10 @@ if app is not None:
         }
 
     @app.post("/api/settings/llm")
-    async def save_llm_settings(payload: LLMSettingsPayload):
+    async def save_llm_settings(
+        payload: LLMSettingsPayload,
+        current_user: Optional[str] = Depends(get_current_user) if HAS_FASTAPI else None,
+    ):
         """
         Persists LLM API keys to SQLite vault and immediately updates environment variables.
         """
@@ -1210,7 +1250,9 @@ if app is not None:
         }
 
     @app.get("/api/settings/llm")
-    async def get_llm_settings():
+    async def get_llm_settings(
+        current_user: Optional[str] = Depends(get_current_user) if HAS_FASTAPI else None,
+    ):
         """
         Returns masked status of configured LLM API keys in vault and environment.
         """
@@ -1223,7 +1265,10 @@ if app is not None:
         }
 
     @app.post("/api/settings/sentinel/test")
-    async def test_sentinel_connection(payload: SentinelSettings):
+    async def test_sentinel_connection(
+        payload: SentinelSettings,
+        current_user: Optional[str] = Depends(get_current_user) if HAS_FASTAPI else None,
+    ):
         """
         Temporarily instantiates SentinelClient with submitted credentials and tests authentication.
         """
@@ -1472,9 +1517,14 @@ async def tune_telemetry(
     if current_threshold is None:
         current_threshold = 1
 
-    # Retrieve Sentinel credentials from vault or integration registry
+    # Retrieve Sentinel credentials from the encrypted vault.
     vault = VaultService()
-    sentinel_creds = ACTIVE_INTEGRATIONS.get("sentinel", {})
+    sentinel_creds = vault.get_secret("SENTINEL_SETTINGS") or {}
+    if isinstance(sentinel_creds, str):
+        try:
+            sentinel_creds = json.loads(sentinel_creds)
+        except json.JSONDecodeError:
+            sentinel_creds = {}
     tenant_id = sentinel_creds.get("tenant_id") or vault.get_secret("AZURE_TENANT_ID") or os.environ.get("AZURE_TENANT_ID", "")
     client_id = sentinel_creds.get("client_id") or vault.get_secret("AZURE_CLIENT_ID") or os.environ.get("AZURE_CLIENT_ID", "")
     client_secret = sentinel_creds.get("client_secret") or vault.get_secret("AZURE_CLIENT_SECRET") or os.environ.get("AZURE_CLIENT_SECRET", "")
@@ -1494,7 +1544,11 @@ async def tune_telemetry(
             sentinel_res = sentinel_client.execute_kql_query(kql_query)
     except Exception as e:
         logger.error(f"Diagnostics pipeline failed: Sentinel query execution error: {e}", exc_info=True)
-        sentinel_res = {"row_count": 0, "sample_records": []}
+        raise HTTPException(status_code=503, detail=f"Sentinel query failed: {e}") from e
+
+    if isinstance(sentinel_res, dict) and sentinel_res.get("success") is False:
+        detail = sentinel_res.get("error") or "Sentinel telemetry query failed."
+        raise HTTPException(status_code=503, detail=detail)
 
     if isinstance(sentinel_res, dict):
         baseline_count = sentinel_res.get("row_count", sentinel_res.get("count", 0))
@@ -1605,4 +1659,3 @@ async def tune_telemetry(
         "noise_diagnostics": noise_diagnostics,
         "tuned_kql": tuned_kql,
     }
-
