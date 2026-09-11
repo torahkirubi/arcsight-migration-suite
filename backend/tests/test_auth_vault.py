@@ -275,6 +275,18 @@ class TestAuthVault(unittest.TestCase):
         self.assertEqual(verify_response.status_code, 200)
         self.assertEqual(verify_response.json().get("username"), "login_test_analyst")
 
+    def test_registration_rejects_passwords_over_bcrypt_limit(self):
+        """Passwords beyond bcrypt's 72-byte limit return a clear client error."""
+        response = self.client.post(
+            "/api/auth/register",
+            json={
+                "username": "long_password_analyst",
+                "password": "x" * 73,
+            },
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("72 UTF-8 bytes", response.json().get("detail", ""))
+
     # =========================================================================
     # 2. Database Initialization Requirements (SQLAlchemy + SQLite)
     # =========================================================================
@@ -382,4 +394,3 @@ class TestAuthVault(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

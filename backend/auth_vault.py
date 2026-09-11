@@ -25,6 +25,20 @@ import jwt
 from passlib.context import CryptContext
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+MAX_BCRYPT_PASSWORD_BYTES = 72
+
+
+class PasswordTooLongError(ValueError):
+    """Raised when a password exceeds bcrypt's maximum input size."""
+
+
+def validate_password_length(password: str) -> None:
+    """Reject passwords bcrypt would silently truncate or fail to process."""
+    password_bytes = password.encode("utf-8")
+    if len(password_bytes) > MAX_BCRYPT_PASSWORD_BYTES:
+        raise PasswordTooLongError(
+            f"Password must be at most {MAX_BCRYPT_PASSWORD_BYTES} UTF-8 bytes"
+        )
 
 # Fallback or standard FastAPI / Pydantic definitions
 try:
@@ -146,6 +160,7 @@ JWT_ALGORITHM = "HS256"
 
 def hash_password(password: str) -> str:
     """Computes bcrypt hash of password via passlib CryptContext."""
+    validate_password_length(password)
     if pwd_context is not None:
         return pwd_context.hash(password)
     salt = "arcsight_vault_salt_secure_2026"
@@ -570,6 +585,13 @@ async def register_endpoint(payload: RegisterRequest):
             status_code=status.HTTP_400_BAD_REQUEST if hasattr(status, "HTTP_400_BAD_REQUEST") else 400,
             detail="Username and password are required",
         )
+    try:
+        validate_password_length(password)
+    except PasswordTooLongError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST if hasattr(status, "HTTP_400_BAD_REQUEST") else 400,
+            detail=str(exc),
+        ) from exc
 
     engine = init_auth_vault_db()
     conn = engine.raw_connection()
