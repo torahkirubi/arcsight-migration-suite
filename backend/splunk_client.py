@@ -79,12 +79,12 @@ class SplunkTestClient:
         )
         self.password = (
             (password or "").strip()
-            or os.environ.get("SPLUNK_PASSWORD", "ChangeMe123!").strip()
+            or os.environ.get("SPLUNK_PASSWORD", "").strip()
         )
         self.token = (token or "").strip() or os.environ.get("SPLUNK_TOKEN", "").strip()
 
         # Since local Docker Splunk instance uses a self-signed certificate, bypass SSL verification
-        self.verify_ssl = False
+        self.verify_ssl = os.environ.get("SPLUNK_VERIFY_SSL", "false").lower() == "true"
 
     def _get_headers(self) -> Dict[str, str]:
         headers = {"Accept": "application/json"}

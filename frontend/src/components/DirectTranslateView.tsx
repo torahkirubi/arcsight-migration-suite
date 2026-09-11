@@ -196,7 +196,7 @@ export const DirectTranslateView: React.FC<DirectTranslateViewProps> = ({ llmCon
   return (
     <div className="space-y-6 sm:space-y-8 w-full pb-16">
       {/* Top Raw Rule Ingestion Card */}
-      <div className="rounded-2xl border border-white/[0.07] bg-[#0c0d14]/80 backdrop-blur-md p-6 sm:p-8 shadow-sm space-y-5">
+      <div className="workbench-panel p-4 sm:p-5 space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-white/[0.06] pb-5">
           <div className="flex items-center gap-3">
             <div className="w-8 h-8 rounded-lg bg-white/[0.04] border border-white/[0.08] flex items-center justify-center text-cyan-400">
@@ -206,7 +206,7 @@ export const DirectTranslateView: React.FC<DirectTranslateViewProps> = ({ llmCon
               <h2 className="text-base font-semibold text-white tracking-tight">
                 Source ArcSight ESM Rule
               </h2>
-              <p className="text-base text-zinc-400 font-light mt-0.5">
+              <p className="text-xs text-zinc-400 mt-0.5">
                 Deterministic regex boundary parsing. Zero LLM involvement in condition extraction.
               </p>
             </div>
@@ -225,7 +225,7 @@ export const DirectTranslateView: React.FC<DirectTranslateViewProps> = ({ llmCon
           value={rawText}
           onChange={(e) => setRawText(e.target.value)}
           placeholder="Paste raw ArcSight ESM XML, HTML, or rule documentation text here..."
-          className="w-full bg-[#07080b]/90 border border-white/[0.08] focus:border-cyan-400/50 focus:ring-1 focus:ring-cyan-400/20 rounded-xl p-4 sm:p-5 font-mono text-xs sm:text-sm text-zinc-200 focus:outline-none transition-all resize-y leading-relaxed min-h-[160px]"
+          className="w-full bg-[#080a0d] border border-[#29323d] focus:border-cyan-400/50 rounded-sm p-4 font-mono text-xs sm:text-sm text-zinc-200 focus:outline-none transition-all resize-y leading-relaxed min-h-[160px]"
         />
 
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pt-1">
@@ -333,9 +333,27 @@ export const DirectTranslateView: React.FC<DirectTranslateViewProps> = ({ llmCon
 
       {/* Main Workspace (Rendered once translated) */}
       {translationResult && (
-        <div className="space-y-6 sm:space-y-8">
+        <div className="space-y-5 sm:space-y-6">
+          <nav
+            aria-label="Migration workflow"
+            className="workbench-panel flex flex-wrap items-center gap-2 px-4 py-3 text-[11px] font-semibold uppercase tracking-[0.08em]"
+          >
+            {['Ingest', 'Parse', 'Translate', 'Validate', 'Review', 'Export'].map((stage, index) => (
+              <React.Fragment key={stage}>
+                <span
+                  className={`px-2 py-1 ${
+                    index <= 3 ? 'bg-cyan-500/15 text-cyan-300' : 'text-zinc-500'
+                  }`}
+                >
+                  {index + 1} {stage}
+                </span>
+                {index < 5 && <ArrowRight className="h-3 w-3 text-zinc-600" aria-hidden="true" />}
+              </React.Fragment>
+            ))}
+          </nav>
+
           {/* Deterministic Extraction Specification Strip */}
-          <div className="rounded-2xl border border-white/[0.07] bg-[#0c0d14]/80 backdrop-blur-md p-6 sm:p-8 space-y-6">
+          <div className="workbench-panel p-4 sm:p-5 space-y-5">
             <div className="flex items-center justify-between border-b border-white/[0.06] pb-4">
               <div className="flex items-center gap-2.5">
                 <div className="w-7 h-7 rounded-lg bg-emerald-500/[0.08] border border-emerald-500/20 flex items-center justify-center text-emerald-400">
@@ -428,9 +446,9 @@ export const DirectTranslateView: React.FC<DirectTranslateViewProps> = ({ llmCon
           </div>
 
           {/* Dual-Pane Comparison Grid (KQL vs SPL) */}
-          <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
             {/* KQL Panel */}
-            <div className="rounded-2xl border border-white/[0.07] bg-[#0c0d14]/80 backdrop-blur-md p-6 sm:p-7 space-y-5 flex flex-col justify-between">
+            <div className="workbench-panel p-4 sm:p-5 space-y-4 flex flex-col justify-between">
               <div className="space-y-4">
                 <div className="flex items-center justify-between border-b border-white/[0.06] pb-3.5">
                   <div className="flex items-center gap-2.5">
@@ -464,7 +482,7 @@ export const DirectTranslateView: React.FC<DirectTranslateViewProps> = ({ llmCon
             </div>
 
             {/* SPL Panel */}
-            <div className="rounded-2xl border border-white/[0.07] bg-[#0c0d14]/80 backdrop-blur-md p-6 sm:p-7 space-y-5 flex flex-col justify-between">
+            <div className="workbench-panel p-4 sm:p-5 space-y-4 flex flex-col justify-between">
               <div className="space-y-4">
                 <div className="flex items-center justify-between border-b border-white/[0.06] pb-3.5">
                   <div className="flex items-center gap-2.5">

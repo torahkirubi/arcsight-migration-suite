@@ -131,9 +131,16 @@ def resolve_vault_db_path() -> str:
 
 
 DEFAULT_VAULT_DB_PATH = resolve_vault_db_path()
+APP_ENV = os.environ.get("APP_ENV", "development").lower()
 DEFAULT_ADMIN_USER = os.environ.get("ADMIN_USERNAME", "admin")
-DEFAULT_ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "valid_password_123")
-JWT_SECRET_KEY = os.environ.get("JWT_SECRET_KEY", "arcsight-migration-suite-secret-key-super-secure")
+DEFAULT_ADMIN_PASSWORD = os.environ.get(
+    "ADMIN_PASSWORD",
+    "" if APP_ENV == "production" else "valid_password_123",
+)
+JWT_SECRET_KEY = os.environ.get(
+    "JWT_SECRET_KEY",
+    "" if APP_ENV == "production" else "arcsight-migration-suite-secret-key-super-secure",
+)
 JWT_ALGORITHM = "HS256"
 
 
@@ -343,6 +350,8 @@ class VaultService:
         if encryption_key is None:
             encryption_key = os.environ.get("VAULT_MASTER_KEY")
             if not encryption_key:
+                if APP_ENV == "production":
+                    raise RuntimeError("VAULT_MASTER_KEY is required in production.")
                 # Deterministic fallback key derived from constant seed for environments without VAULT_MASTER_KEY
                 encryption_key = base64.urlsafe_b64encode(
                     hashlib.sha256(b"arcsight-vault-master-key-default-seed-2026").digest()
@@ -622,4 +631,3 @@ async def verify_endpoint(
         "authenticated": True,
         "username": user,
     }
-

@@ -213,6 +213,36 @@ export interface LLMConfig {
 
 const API_BASE = '/api';
 
+function getAuthToken(): string | null {
+  return sessionStorage.getItem('auth_token') || localStorage.getItem('auth_token');
+}
+
+export async function apiFetch(path: string, init: RequestInit = {}): Promise<Response> {
+  const headers: Record<string, string> = {};
+  if (init.headers instanceof Headers) {
+    init.headers.forEach((value, key) => {
+      headers[key] = value;
+    });
+  } else if (Array.isArray(init.headers)) {
+    init.headers.forEach(([key, value]) => {
+      headers[key] = value;
+    });
+  } else if (init.headers) {
+    Object.assign(headers, init.headers);
+  }
+  const token = getAuthToken();
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+  const url = path.startsWith('/api/') ? path : `${API_BASE}${path}`;
+  const response = await fetch(url, { ...init, headers });
+  if (response.status === 401) {
+    sessionStorage.removeItem('auth_token');
+    localStorage.removeItem('auth_token');
+  }
+  return response;
+}
+
 export async function fetchHealth(
   provider = 'lm_studio',
   customBaseUrl?: string,
@@ -249,7 +279,7 @@ export async function translateDirect(
   deepMode = false,
   onStatus?: (status: string) => void
 ): Promise<TranslateDirectResponse> {
-  const res = await fetch(`${API_BASE}/translate-direct`, {
+  const res = await apiFetch('/translate-direct', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -348,7 +378,7 @@ export async function validateCustomQuery(
   requiredTerms: string[],
   exclusionTerms: string[]
 ): Promise<SingleLanguageValidation> {
-  const res = await fetch(`${API_BASE}/validate`, {
+  const res = await apiFetch('/validate', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -373,7 +403,7 @@ export async function generateRunbook(
   splQuery: string,
   llmConfig: LLMConfig
 ): Promise<{ success: boolean; threat_analysis: ThreatAnalysis }> {
-  const res = await fetch(`${API_BASE}/generate-runbook`, {
+  const res = await apiFetch('/generate-runbook', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -394,7 +424,7 @@ export async function generateRunbook(
 }
 
 export async function saveRunbook(payload: SaveRunbookRequest): Promise<SaveRunbookResponse> {
-  const res = await fetch(`${API_BASE}/save-runbook`, {
+  const res = await apiFetch('/save-runbook', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -412,7 +442,7 @@ export async function testLiveSplunk(
   latest = 'now',
   maxEvents = 25
 ): Promise<LiveSplunkTestResponse> {
-  const res = await fetch(`${API_BASE}/test-live-splunk`, {
+  const res = await apiFetch('/test-live-splunk', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -440,7 +470,7 @@ export async function fetchAuditLog(
   });
   if (ruleName) params.append('rule_name', ruleName);
 
-  const res = await fetch(`${API_BASE}/audit-log?${params.toString()}`);
+  const res = await apiFetch(`/audit-log?${params.toString()}`);
   if (!res.ok) {
     throw new Error(`Failed to fetch audit history: HTTP ${res.status}`);
   }
@@ -463,7 +493,7 @@ export async function saveLLMSettings(
   apiKey: string,
   modelName?: string
 ): Promise<LLMSettingsResponse> {
-  const res = await fetch(`${API_BASE}/settings/llm`, {
+  const res = await apiFetch('/settings/llm', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -480,11 +510,10 @@ export async function saveLLMSettings(
 }
 
 export async function getLLMSettings(provider: string): Promise<{ success: boolean; provider: string; has_key: boolean; model_name?: string }> {
-  const res = await fetch(`${API_BASE}/settings/llm?provider=${encodeURIComponent(provider)}`);
+  const res = await apiFetch(`/settings/llm?provider=${encodeURIComponent(provider)}`);
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(err.detail || `Failed to fetch LLM settings: HTTP ${res.status}`);
   }
   return res.json();
 }
-
