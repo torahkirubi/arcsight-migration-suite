@@ -40,6 +40,12 @@ export const AppContent: React.FC = () => {
     custom_base_url: 'http://localhost:1234/v1',
   });
 
+  React.useEffect(() => {
+    const handleAuthExpired = () => setToken(null);
+    window.addEventListener('auth:expired', handleAuthExpired);
+    return () => window.removeEventListener('auth:expired', handleAuthExpired);
+  }, []);
+
   if (!token) return <LoginGate onLoginSuccess={setToken} />;
 
   const logout = () => {
@@ -78,7 +84,7 @@ export const AppContent: React.FC = () => {
 
       <main className="studio-main">
         {section === 'translate' && <DirectTranslateView llmConfig={llmConfig} />}
-        {section === 'tuning' && <div className="studio-page"><PageHeading eyebrow="Telemetry lab" title="Tune the signal, not the rule" description="Explore live Sentinel telemetry and find a threshold your analysts can trust." icon={<TerminalSquare size={18} />} /><StandaloneTuningView /></div>}
+        {section === 'tuning' && <div className="studio-page"><PageHeading eyebrow="Telemetry lab" title="Tune the signal, not the rule" description="Explore live Sentinel telemetry and find a threshold your analysts can trust." icon={<TerminalSquare size={18} />} /><StandaloneTuningView llmConfig={llmConfig} /></div>}
         {section === 'settings' && <div className="studio-page"><PageHeading eyebrow="Connections" title="Your tools, in one place" description="Keep service credentials and model routing separate from the migration canvas." icon={<Settings2 size={18} />} /><div className="studio-settings-grid"><div className="studio-sheet"><IntegrationSettings onSaved={() => setSection('translate')} /></div><div className="studio-note"><div className="eyebrow">Active route</div><h2>{llmConfig.model_name}</h2><p>{llmConfig.provider} · local route</p><button className="studio-button secondary" onClick={() => setModelOpen(true)}><Bot size={14} /> Change model</button></div></div></div>}
         {section === 'history' && <div className="studio-page"><PageHeading eyebrow="Archive" title="A trail of every decision" description="Open the audit log when you need to explain what changed, why it changed, and who reviewed it." icon={<History size={18} />} /><div className="archive-empty"><History size={25} /><h2>No context lost</h2><p>Migration history is protected behind the audit viewer, keeping the studio calm until you need it.</p><button className="studio-button primary" onClick={() => setAuditOpen(true)}>Open archive <ArrowUpRight size={14} /></button></div></div>}
       </main>

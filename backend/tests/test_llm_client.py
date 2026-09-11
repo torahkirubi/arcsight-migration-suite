@@ -38,6 +38,15 @@ class TestLLMClientAuth(unittest.TestCase):
         self.assertEqual(client.default_model, "claude-sonnet-4")
         self.assertEqual(client.api_key, "sk-ant-test")
 
+    def test_gemini_model_can_be_selected_explicitly(self):
+        """Gemini routing preserves the caller-selected model identifier."""
+        client = get_llm_client(
+            provider="gemini",
+            api_key="AIzaSy-sample-key-12345",
+            model_name="gemini-3.6-flash",
+        )
+        self.assertEqual(client.default_model, "gemini-3.6-flash")
+
     def test_bearer_prefix_cleaned(self):
         """Ensure 'Bearer ' prefix is stripped if user pastes it."""
         client = get_llm_client(
@@ -239,4 +248,3 @@ class TestLLMClientAuth(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

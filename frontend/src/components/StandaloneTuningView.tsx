@@ -1,14 +1,14 @@
 import React, { useState } from 'react';
 import { Activity, AlertTriangle, CheckCircle2, Copy, Loader2, Sparkles } from 'lucide-react';
-import { apiFetch, TelemetryTuneResponse } from '../api/client';
+import { apiFetch, LLMConfig, TelemetryTuneResponse } from '../api/client';
 import { TelemetryTunerCard } from './TelemetryTunerCard';
 
 export interface TuneResponse extends TelemetryTuneResponse {
   tuned_kql?: string | null;
 }
-export interface StandaloneTuningViewProps { initialKql?: string; initialThreshold?: number; }
+export interface StandaloneTuningViewProps { initialKql?: string; initialThreshold?: number; llmConfig?: LLMConfig; }
 
-export const StandaloneTuningView: React.FC<StandaloneTuningViewProps> = ({ initialKql = '', initialThreshold = 1 }) => {
+export const StandaloneTuningView: React.FC<StandaloneTuningViewProps> = ({ initialKql = '', initialThreshold = 1, llmConfig }) => {
   const [rawKql, setRawKql] = useState(initialKql);
   const [currentThreshold, setCurrentThreshold] = useState<number | string>(initialThreshold);
   const [isLoading, setIsLoading] = useState(false);
@@ -24,7 +24,11 @@ export const StandaloneTuningView: React.FC<StandaloneTuningViewProps> = ({ init
       const response = await apiFetch('/telemetry/tune', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ raw_kql: rawKql, current_threshold: Number(currentThreshold) || 1 }),
+        body: JSON.stringify({
+          raw_kql: rawKql,
+          current_threshold: Number(currentThreshold) || 1,
+          ...(llmConfig ? { llm_config: llmConfig } : {}),
+        }),
       });
       if (!response.ok) {
         const errData = await response.json().catch(() => ({}));
