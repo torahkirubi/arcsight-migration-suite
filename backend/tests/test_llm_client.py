@@ -223,6 +223,63 @@ class TestLLMClientAuth(unittest.TestCase):
                 with self.assertRaises(LLMTruncationError):
                     asyncio.run(client.complete(prompt="hello"))
 
+    def test_gemini_auth_key_prefixed_aq_omits_query_param(self):
+        """Ensure Gemini auth keys (AQ.*) use Authorization: Bearer and omit ?key= query parameter."""
+        from backend.llm_client import HAS_HTTPX
+        import json
+        import asyncio
+
+        client = get_llm_client(provider="gemini", api_key="AQ.SampleAuthKey123")
+        if HAS_HTTPX:
+            mock_resp = MagicMock()
+            mock_resp.status_code = 200
+            mock_resp.json.return_value = {
+                "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}]
+            }
+            with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
+                mock_post.return_value = mock_resp
+                res = asyncio.run(client.complete(prompt="hello"))
+                self.assertEqual(res, "ok")
+                call_args, call_kwargs = mock_post.call_args
+                called_url = call_args[0]
+                called_headers = call_kwargs.get("headers", {})
+                self.assertNotIn("key=", called_url)
+                self.assertEqual(called_headers.get("Authorization"), "Bearer AQ.SampleAuthKey123")
+                self.assertEqual(called_headers.get("x-goog-api-key"), "AQ.SampleAuthKey123")
+        else:
+            mock_resp = MagicMock()
+            mock_resp.read.return_value = json.dumps({
+                "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}]
+            }).encode("utf-8")
+            mock_resp.__enter__.return_value = mock_resp
+            with patch("urllib.request.urlopen", return_value=mock_resp) as mock_urlopen:
+                res = asyncio.run(client.complete(prompt="hello"))
+                self.assertEqual(res, "ok")
+                req = mock_urlopen.call_args[0][0]
+                self.assertNotIn("key=", req.full_url)
+                self.assertEqual(req.get_header("Authorization"), "Bearer AQ.SampleAuthKey123")
+                self.assertEqual(req.get_header("X-goog-api-key"), "AQ.SampleAuthKey123")
+
+    def test_gemini_invalid_auth_key_raises_descriptive_auth_error(self):
+        """Ensure 400 Invalid Auth key raises LLMAuthError with instructions to generate a new key."""
+        import asyncio
+        from backend.llm_client import LLMAuthError
+        import urllib.error
+
+        client = get_llm_client(provider="gemini", api_key="AQ.BlockedKey")
+        mock_http_error = urllib.error.HTTPError(
+            url="https://generativelanguage.googleapis.com",
+            code=400,
+            msg="Bad Request",
+            hdrs={},
+            fp=MagicMock(read=MagicMock(return_value=b'[{"error": {"code": 400, "message": "Invalid Auth key.", "status": "INVALID_ARGUMENT"}}]'))
+        )
+        with patch("urllib.request.urlopen", side_effect=mock_http_error):
+            with self.assertRaises(LLMAuthError) as ctx:
+                asyncio.run(client.complete(prompt="hello"))
+            self.assertIn("Invalid Auth key", str(ctx.exception))
+            self.assertIn("aistudio.google.com", str(ctx.exception))
+
 
 if __name__ == "__main__":
     unittest.main()

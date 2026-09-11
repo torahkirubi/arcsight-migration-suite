@@ -163,8 +163,9 @@ class OpenAICompatibleClient(BaseLLMClient):
         if is_gemini:
             if not effective_key:
                 raise LLMError("Gemini API key is not configured in vault or environment")
-            # For Gemini OpenAI-compatible endpoint, append ?key=<api_key> if not already present
-            if "key=" not in endpoint:
+            # For Gemini endpoints, append ?key=<api_key> if key is a standard Google API key (not an Auth key starting with AQ.)
+            # and not already in endpoint
+            if "key=" not in endpoint and not effective_key.startswith("AQ."):
                 separator = "&" if "?" in endpoint else "?"
                 endpoint = f"{endpoint}{separator}key={effective_key}"
 
@@ -220,8 +221,18 @@ class OpenAICompatibleClient(BaseLLMClient):
                         f"endpoint={endpoint}, key_prefix={redacted_key}, response={response.text}"
                     )
                     raise LLMAuthError(
-                        f"401 Unauthorized from {self.provider_name}: Invalid or missing API key. "
+                        f"{response.status_code} Unauthorized from {self.provider_name}: Invalid or missing API key. "
                         f"URL: {endpoint}, Key: {redacted_key}. Response: {response.text[:200]}"
+                    )
+                elif response.status_code == 400 and ("Invalid Auth key" in response.text or "API_KEY_SERVICE_BLOCKED" in response.text):
+                    logger.error(
+                        f"Google Gemini key is blocked or unauthorized for generativelanguage.googleapis.com. "
+                        f"Key prefix: {redacted_key}. Generate a new key in Google AI Studio: https://aistudio.google.com/apikey"
+                    )
+                    raise LLMAuthError(
+                        f"400 Invalid Auth key from Google Gemini (API_KEY_SERVICE_BLOCKED). "
+                        f"The configured key ({redacted_key}) is blocked or lacks permission for Generative Language API. "
+                        f"Generate a fresh key at https://aistudio.google.com/apikey and update GEMINI_API_KEY."
                     )
                 elif response.status_code == 429:
                     logger.error(
@@ -264,8 +275,18 @@ class OpenAICompatibleClient(BaseLLMClient):
                 )
                 if exc.code in (401, 403):
                     raise LLMAuthError(
-                        f"401 Unauthorized from {self.provider_name}: Invalid or missing API key. "
+                        f"{exc.code} Unauthorized from {self.provider_name}: Invalid or missing API key. "
                         f"URL: {endpoint}, Key: {redacted_key}. Response: {err_body[:200]}"
+                    ) from exc
+                elif exc.code == 400 and ("Invalid Auth key" in err_body or "API_KEY_SERVICE_BLOCKED" in err_body):
+                    logger.error(
+                        f"Google Gemini key is blocked or unauthorized for generativelanguage.googleapis.com. "
+                        f"Key prefix: {redacted_key}. Generate a new key in Google AI Studio: https://aistudio.google.com/apikey"
+                    )
+                    raise LLMAuthError(
+                        f"400 Invalid Auth key from Google Gemini (API_KEY_SERVICE_BLOCKED). "
+                        f"The configured key ({redacted_key}) is blocked or lacks permission for Generative Language API. "
+                        f"Generate a fresh key at https://aistudio.google.com/apikey and update GEMINI_API_KEY."
                     ) from exc
                 raise LLMError(
                     f"{self.provider_name} returned error {exc.code} "
