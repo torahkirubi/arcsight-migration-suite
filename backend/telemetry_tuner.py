@@ -61,6 +61,38 @@ CANONICAL_FIELDS: Dict[str, str] = {
     "eventid": "EventID",
     "ipaddress": "IpAddress",
 }
+SUPPORTED_ENTITY_FIELDS = frozenset(CANONICAL_FIELDS.values())
+
+
+def normalize_structured_entities(entities: Any) -> List[Dict[str, str]]:
+    """Accept only explicit field/value objects for safe KQL generation."""
+    if not isinstance(entities, list):
+        return []
+
+    normalized: List[Dict[str, str]] = []
+    for entity in entities:
+        if not isinstance(entity, dict):
+            continue
+        if "field" in entity and "value" in entity:
+            pair = _normalize_entity_pair(str(entity["field"]), entity["value"])
+            if pair and pair[0] in SUPPORTED_ENTITY_FIELDS:
+                normalized.append({"field": pair[0], "value": pair[1]})
+            continue
+        if len(entity) == 1:
+            key, value = next(iter(entity.items()))
+            pair = _normalize_entity_pair(str(key), value)
+            if pair and pair[0] in SUPPORTED_ENTITY_FIELDS:
+                normalized.append({"field": pair[0], "value": pair[1]})
+            continue
+        if len(entity) > 1 and all(str(key) in SUPPORTED_ENTITY_FIELDS for key in entity):
+            compound = {
+                CANONICAL_FIELDS[str(key).lower()]: str(value).strip().replace(r"\'", "'").replace("'", r"\'")
+                for key, value in entity.items()
+                if value is not None and str(value).strip()
+            }
+            if compound:
+                normalized.append(compound)
+    return normalized
 
 
 def _normalize_entity_pair(field_name: str, val: Any) -> Optional[tuple]:
@@ -241,5 +273,3 @@ def apply_exclusions(
         else:
             joined_clauses = " ".join(clauses)
             return f"{raw_kql.rstrip()} {joined_clauses}"
-
-
