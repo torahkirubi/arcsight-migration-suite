@@ -161,47 +161,38 @@ export const DirectTranslateView: React.FC<{ llmConfig: LLMConfig }> = ({ llmCon
   };
 
   return (
-    <div className="space-y-5">
-      <div className="flex flex-col justify-between gap-4 border-b border-[#202832] pb-5 xl:flex-row xl:items-end">
+    <div className="studio-canvas">
+      <div className="studio-canvas-intro">
         <div>
-          <div className="eyebrow">Migration workspace</div>
-          <h1 className="mt-1 text-2xl font-semibold tracking-tight text-white">ArcSight rule migration</h1>
-          <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-500">
-            Parse legacy correlation logic deterministically, translate it to KQL and SPL, then review every safety boundary before export.
+          <div className="eyebrow">01 / compose</div>
+          <h1>Turn a legacy rule into a deployable signal.</h1>
+          <p>
+            Start with the rule. The studio will parse its intent, translate both target languages, and hold the final decision for human review.
           </p>
         </div>
-        <div className={`status-banner status-${status.tone}`}>
-          {status.tone === 'good' ? <CheckCircle2 size={16} /> : status.tone === 'danger' ? <AlertTriangle size={16} /> : <FileText size={16} />}
-          {status.label}
-        </div>
+        <div className="canvas-status"><span className={`canvas-status-dot ${status.tone}`} /> {status.label}</div>
       </div>
 
-      <section className="workbench-panel p-4 sm:p-5">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-          <div className="flex items-center gap-3">
-            <span className="section-icon"><FileCode2 size={17} /></span>
-            <div>
-              <div className="eyebrow">01 · Source rule</div>
-              <h2 className="mt-1 text-sm font-semibold text-white">Paste an ArcSight export</h2>
-            </div>
-          </div>
-          <button className="button-quiet" onClick={() => setRawText(SAMPLE_RULE)}><Sparkles size={14} /> Load sample</button>
+      <section className="source-canvas">
+        <div className="source-canvas-top">
+          <div><span className="source-index">A</span><span><strong>Source rule</strong><small>ArcSight export / correlation definition</small></span></div>
+          <button className="canvas-link" onClick={() => setRawText(SAMPLE_RULE)}><Sparkles size={14} /> Use a sample rule</button>
         </div>
         <textarea
           aria-label="Source ArcSight rule"
           value={rawText}
           onChange={(event) => setRawText(event.target.value)}
           placeholder="Paste raw ArcSight XML, HTML, or rule documentation here..."
-          className="query-input mt-4 min-h-[190px]"
+          className="studio-query-input"
         />
-        <div className="mt-4 flex flex-col gap-3 border-t border-[#202832] pt-4 sm:flex-row sm:items-center sm:justify-between">
-          <label className="inline-flex items-center gap-3 text-xs text-slate-400">
+        <div className="source-canvas-footer">
+          <label className="deep-toggle">
             <input type="checkbox" checked={deepMode} onChange={(event) => setDeepMode(event.target.checked)} />
-            <span><strong className="font-medium text-slate-200">Deep Mode</strong> · run generated SPL through bounded Splunk validation</span>
+            <span><strong>Deep validation</strong><small>bounded Splunk feedback loop</small></span>
           </label>
-          <button className="button-primary" onClick={translate} disabled={!rawText.trim() || busy === 'translate'}>
+          <button className="studio-button primary translate-action" onClick={translate} disabled={!rawText.trim() || busy === 'translate'}>
             {busy === 'translate' ? <RefreshCw className="animate-spin" size={15} /> : <Play size={15} />}
-            {busy === 'translate' ? 'Translating…' : 'Translate rule'}
+            {busy === 'translate' ? 'Working…' : 'Run translation'}
           </button>
         </div>
       </section>

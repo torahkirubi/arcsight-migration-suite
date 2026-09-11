@@ -1,17 +1,15 @@
 import React, { useState } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import {
-  Activity,
-  BarChart3,
-  BookOpen,
+  ArrowUpRight,
+  Bot,
   FileCode2,
   History,
   LogOut,
-  Menu,
   Settings2,
-  Shield,
   SlidersHorizontal,
-  X,
+  Sparkles,
+  TerminalSquare,
 } from 'lucide-react';
 import { LLMConfig } from './api/client';
 import { DirectTranslateView } from './components/DirectTranslateView';
@@ -21,25 +19,19 @@ import { ModelSelector } from './components/ModelSelector';
 import { AuditLogModal } from './components/AuditLogModal';
 import { LoginGate } from './components/LoginGate';
 
-const queryClient = new QueryClient({
-  defaultOptions: { queries: { refetchOnWindowFocus: false } },
-});
-
+const queryClient = new QueryClient({ defaultOptions: { queries: { refetchOnWindowFocus: false } } });
 export type AppSection = 'translate' | 'tuning' | 'settings' | 'history';
 
-const navItems: Array<{ id: AppSection; label: string; caption: string; icon: React.ElementType }> = [
-  { id: 'translate', label: 'Translate', caption: 'Migration workspace · validate rules', icon: FileCode2 },
-  { id: 'tuning', label: 'Live Tuning', caption: 'Sentinel telemetry thresholds', icon: SlidersHorizontal },
-  { id: 'settings', label: 'Settings', caption: 'Connect LLM and Sentinel', icon: Settings2 },
-  { id: 'history', label: 'Audit', caption: 'Review migration activity', icon: History },
+const sections: Array<{ id: AppSection; label: string; icon: React.ElementType }> = [
+  { id: 'translate', label: 'Studio', icon: FileCode2 },
+  { id: 'tuning', label: 'Telemetry', icon: SlidersHorizontal },
+  { id: 'settings', label: 'Connections', icon: Settings2 },
+  { id: 'history', label: 'Archive', icon: History },
 ];
 
 export const AppContent: React.FC = () => {
-  const [token, setToken] = useState<string | null>(
-    sessionStorage.getItem('auth_token') || localStorage.getItem('auth_token'),
-  );
+  const [token, setToken] = useState<string | null>(sessionStorage.getItem('auth_token') || localStorage.getItem('auth_token'));
   const [section, setSection] = useState<AppSection>('translate');
-  const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [modelOpen, setModelOpen] = useState(false);
   const [auditOpen, setAuditOpen] = useState(false);
   const [llmConfig, setLlmConfig] = useState<LLMConfig>({
@@ -48,101 +40,48 @@ export const AppContent: React.FC = () => {
     custom_base_url: 'http://localhost:1234/v1',
   });
 
+  if (!token) return <LoginGate onLoginSuccess={setToken} />;
+
   const logout = () => {
     sessionStorage.removeItem('auth_token');
     localStorage.removeItem('auth_token');
     setToken(null);
   };
-
-  if (!token) return <LoginGate onLoginSuccess={setToken} />;
-
-  const selectSection = (next: AppSection) => {
-    setSection(next);
-    setMobileNavOpen(false);
-  };
+  const selectSection = (next: AppSection) => setSection(next);
 
   return (
-    <div className="min-h-screen bg-[#080a0d] text-slate-200">
-      <header className="sticky top-0 z-40 border-b border-[#202832] bg-[#0b0f13]">
-        <div className="mx-auto flex h-16 max-w-[1680px] items-center justify-between px-4 sm:px-6">
-          <div className="flex items-center gap-3">
-            <button
-              className="inline-flex h-9 w-9 items-center justify-center border border-[#29323d] text-slate-300 lg:hidden"
-              onClick={() => setMobileNavOpen((open) => !open)}
-              aria-label="Toggle navigation"
-            >
-              {mobileNavOpen ? <X size={18} /> : <Menu size={18} />}
+    <div className="studio-app">
+      <header className="studio-topbar">
+        <button className="studio-brand" onClick={() => selectSection('translate')}>
+          <span className="brand-mark"><Sparkles size={16} /></span>
+          <span><strong>arc<span>/</span>shift</strong><small>migration studio</small></span>
+        </button>
+        <nav className="studio-nav" aria-label="Primary navigation">
+          {sections.map(({ id, label, icon: Icon }) => (
+            <button key={id} aria-label={id === 'translate' ? 'Translate' : id === 'tuning' ? 'Live Tuning' : id === 'settings' ? 'Settings' : 'Audit'} className={section === id ? 'studio-nav-item active' : 'studio-nav-item'} onClick={() => selectSection(id)}>
+              <Icon size={14} /> {label}
             </button>
-            <button className="flex items-center gap-3 text-left" onClick={() => selectSection('translate')}>
-              <span className="flex h-9 w-9 items-center justify-center bg-cyan-400 text-slate-950">
-                <Shield size={18} />
-              </span>
-              <span>
-                <span className="block text-sm font-semibold tracking-wide text-white">ArcSight Migration</span>
-                <span className="hidden text-[10px] uppercase tracking-[0.16em] text-slate-500 sm:block">
-                  Detection engineering workspace
-                </span>
-              </span>
-            </button>
-          </div>
-
-          <div className="hidden items-center gap-2 md:flex">
-            <ServiceChip label="API" state="online" />
-            <ServiceChip label="LLM" state={llmConfig.provider === 'lm_studio' ? 'local' : 'cloud'} />
-            <button className="icon-button" title="Model route" aria-label="Model route" onClick={() => setModelOpen(true)}>
-              <Activity size={16} />
-            </button>
-            <button className="icon-button" title="Sign out" onClick={logout} aria-label="Logout">
-              <LogOut size={16} />
-            </button>
-          </div>
+          ))}
+        </nav>
+        <div className="studio-actions">
+          <button className="model-pill" onClick={() => setModelOpen(true)} aria-label="Model route">
+            <span className="pulse-dot" /><Bot size={14} /> <span className="model-pill-name">{llmConfig.model_name}</span>
+          </button>
+          <button className="round-action" title="Logout" aria-label="Logout" onClick={logout}><LogOut size={15} /></button>
         </div>
       </header>
 
-      <div className="mx-auto flex max-w-[1680px]">
-        <aside
-          className={`fixed inset-y-16 left-0 z-30 w-72 border-r border-[#202832] bg-[#0b0f13] p-3 transition-transform lg:sticky lg:top-16 lg:block lg:h-[calc(100vh-4rem)] lg:translate-x-0 ${
-            mobileNavOpen ? 'translate-x-0' : '-translate-x-full'
-          }`}
-        >
-          <div className="mb-4 px-3 pt-2">
-            <div className="eyebrow">Workspace</div>
-            <p className="mt-1 text-xs leading-5 text-slate-500">Move from source rule to reviewed, exportable detection.</p>
-          </div>
-          <nav className="space-y-1" aria-label="Primary navigation">
-            {navItems.map(({ id, label, caption, icon: Icon }) => (
-              <button
-                key={id}
-                className={`nav-item ${section === id ? 'nav-item-active' : ''}`}
-                onClick={() => selectSection(id)}
-                aria-current={section === id ? 'page' : undefined}
-              >
-                <Icon size={17} />
-                <span className="min-w-0 text-left">
-                  <span className="block truncate text-sm font-medium">{label}</span>
-                  <span aria-hidden="true" className="mt-0.5 block truncate text-[11px] text-slate-500">{caption}</span>
-                </span>
-              </button>
-            ))}
-          </nav>
-
-        </aside>
-
-        <main className="min-w-0 flex-1 px-4 py-5 sm:px-6 lg:px-8 lg:py-7">
-          {section === 'translate' && <DirectTranslateView llmConfig={llmConfig} />}
-          {section === 'tuning' && <StandaloneTuningView />}
-          {section === 'settings' && (
-            <SettingsSection
-              llmConfig={llmConfig}
-              onModel={() => setModelOpen(true)}
-              onSaved={() => selectSection('translate')}
-            />
-          )}
-          {section === 'history' && (
-            <HistorySection onOpen={() => setAuditOpen(true)} />
-          )}
-        </main>
+      <div className="studio-subbar">
+        <div className="studio-breadcrumb"><span>Workspace</span><ArrowUpRight size={13} /><strong>{sections.find((item) => item.id === section)?.label}</strong></div>
+        <div className="studio-shortcuts"><span><kbd>⌘</kbd>K</span> command menu <span className="shortcut-separator" /><span className="live-indicator">●</span> API ready</div>
       </div>
+
+      <main className="studio-main">
+        {section === 'translate' && <DirectTranslateView llmConfig={llmConfig} />}
+        {section === 'tuning' && <div className="studio-page"><PageHeading eyebrow="Telemetry lab" title="Tune the signal, not the rule" description="Explore live Sentinel telemetry and find a threshold your analysts can trust." icon={<TerminalSquare size={18} />} /><StandaloneTuningView /></div>}
+        {section === 'settings' && <div className="studio-page"><PageHeading eyebrow="Connections" title="Your tools, in one place" description="Keep service credentials and model routing separate from the migration canvas." icon={<Settings2 size={18} />} /><div className="studio-settings-grid"><div className="studio-sheet"><IntegrationSettings onSaved={() => setSection('translate')} /></div><div className="studio-note"><div className="eyebrow">Active route</div><h2>{llmConfig.model_name}</h2><p>{llmConfig.provider} · local route</p><button className="studio-button secondary" onClick={() => setModelOpen(true)}><Bot size={14} /> Change model</button></div></div></div>}
+        {section === 'history' && <div className="studio-page"><PageHeading eyebrow="Archive" title="A trail of every decision" description="Open the audit log when you need to explain what changed, why it changed, and who reviewed it." icon={<History size={18} />} /><div className="archive-empty"><History size={25} /><h2>No context lost</h2><p>Migration history is protected behind the audit viewer, keeping the studio calm until you need it.</p><button className="studio-button primary" onClick={() => setAuditOpen(true)}>Open archive <ArrowUpRight size={14} /></button></div></div>}
+      </main>
 
       <ModelSelector isOpen={modelOpen} onClose={() => setModelOpen(false)} config={llmConfig} onChange={setLlmConfig} />
       <AuditLogModal isOpen={auditOpen} onClose={() => setAuditOpen(false)} />
@@ -150,80 +89,10 @@ export const AppContent: React.FC = () => {
   );
 };
 
-const ServiceChip: React.FC<{ label: string; state: string }> = ({ label, state }) => (
-  <span className="status-chip">
-    <span className={`status-dot ${state === 'online' || state === 'local' ? 'status-dot-good' : 'status-dot-warn'}`} />
-    {label} <span className="text-slate-500">{state}</span>
-  </span>
-);
-
-const SettingsSection: React.FC<{
-  llmConfig: LLMConfig;
-  onModel: () => void;
-  onSaved: () => void;
-}> = ({ llmConfig, onModel, onSaved }) => (
-  <PageIntro
-    eyebrow="Integrations"
-    title="Connect the services behind the migration pipeline"
-    description="Credentials are stored by the backend vault. Configure the Sentinel workspace separately from the model route."
-    icon={<Settings2 size={18} />}
-  >
-    <div className="grid gap-5 xl:grid-cols-[1fr_340px]">
-      <div className="workbench-panel p-5">
-        <IntegrationSettings onSaved={onSaved} />
-      </div>
-      <div className="workbench-panel h-fit p-5">
-        <div className="eyebrow">Active model route</div>
-        <h2 className="mt-2 text-base font-semibold text-white">{llmConfig.model_name || 'No model selected'}</h2>
-        <p className="mt-1 text-xs leading-5 text-slate-500">{llmConfig.provider} · {llmConfig.custom_base_url}</p>
-        <button className="button-secondary mt-5 w-full" onClick={onModel}>
-          <Activity size={15} /> Configure model
-        </button>
-      </div>
-    </div>
-  </PageIntro>
-);
-
-const HistorySection: React.FC<{ onOpen: () => void }> = ({ onOpen }) => (
-  <PageIntro
-    eyebrow="Audit history"
-    title="Trace every migration decision"
-    description="Review translation outcomes, validation coverage, provider usage, and export activity."
-    icon={<BarChart3 size={18} />}
-  >
-    <div className="workbench-panel flex min-h-64 flex-col items-center justify-center p-8 text-center">
-      <History className="text-cyan-300" size={28} />
-      <h2 className="mt-4 text-base font-semibold text-white">Migration activity log</h2>
-      <p className="mt-2 max-w-md text-sm leading-6 text-slate-500">Open the protected audit trail to inspect recent translations and their validation outcomes.</p>
-      <button className="button-primary mt-5" onClick={onOpen}><History size={15} /> Open audit history</button>
-    </div>
-  </PageIntro>
-);
-
-const PageIntro: React.FC<{
-  eyebrow: string;
-  title: string;
-  description: string;
-  icon: React.ReactNode;
-  children: React.ReactNode;
-}> = ({ eyebrow, title, description, icon, children }) => (
-  <div className="space-y-6">
-    <div className="flex items-start gap-3 border-b border-[#202832] pb-5">
-      <span className="section-icon">{icon}</span>
-      <div>
-        <div className="eyebrow">{eyebrow}</div>
-        <h1 className="mt-1 text-xl font-semibold tracking-tight text-white sm:text-2xl">{title}</h1>
-        <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-500">{description}</p>
-      </div>
-    </div>
-    {children}
-  </div>
+const PageHeading: React.FC<{ eyebrow: string; title: string; description: string; icon: React.ReactNode }> = ({ eyebrow, title, description, icon }) => (
+  <div className="studio-heading"><span className="heading-icon">{icon}</span><div><div className="eyebrow">{eyebrow}</div><h1>{title}</h1><p>{description}</p></div></div>
 );
 
 export default function App() {
-  return (
-    <QueryClientProvider client={queryClient}>
-      <AppContent />
-    </QueryClientProvider>
-  );
+  return <QueryClientProvider client={queryClient}><AppContent /></QueryClientProvider>;
 }
