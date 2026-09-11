@@ -25,6 +25,19 @@ class TestLLMClientAuth(unittest.TestCase):
         self.assertEqual(client.api_key, "sk-test-dynamic-key-12345")
         self.assertEqual(client.provider_name, "Cloud OpenAI")
 
+    def test_custom_provider_preserves_endpoint_and_model(self):
+        """Unknown provider names use the supplied OpenAI-compatible route."""
+        client = get_llm_client(
+            provider="claude",
+            custom_base_url="https://api.anthropic.com/v1",
+            api_key="sk-ant-test",
+            model_name="claude-sonnet-4",
+        )
+        self.assertEqual(client.provider_name, "claude")
+        self.assertEqual(client.base_url, "https://api.anthropic.com/v1")
+        self.assertEqual(client.default_model, "claude-sonnet-4")
+        self.assertEqual(client.api_key, "sk-ant-test")
+
     def test_bearer_prefix_cleaned(self):
         """Ensure 'Bearer ' prefix is stripped if user pastes it."""
         client = get_llm_client(
@@ -226,5 +239,4 @@ class TestLLMClientAuth(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
 

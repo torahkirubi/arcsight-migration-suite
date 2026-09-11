@@ -196,6 +196,80 @@
   .studio-canvas .workbench-panel { border-color: #d9d8d2; background: #faf9f6; }
   .studio-canvas .query-output, .studio-canvas .query-input { border-color: #d9d8d2; background: #fffefb; color: #3d4745; }
   .studio-canvas .eyebrow { color: #a06758; }
+  .studio-canvas .workbench-panel h2,
+  .studio-canvas .workbench-panel .text-white { color: #263034 !important; }
+  .studio-canvas .workbench-panel .text-slate-200,
+  .studio-canvas .workbench-panel .text-slate-300,
+  .studio-canvas .workbench-panel .text-slate-400 { color: #58615e !important; }
+  .studio-canvas .workbench-panel .text-slate-500 { color: #747d79 !important; }
+  .studio-canvas .workbench-panel .text-slate-600 { color: #8a918e !important; }
+  .studio-canvas .workbench-panel .text-cyan-300 { color: #2c7887 !important; }
+  .studio-canvas .workbench-panel .text-emerald-300 { color: #367653 !important; }
+  .studio-canvas .workbench-panel .text-rose-300 { color: #a2402c !important; }
+  .studio-canvas .workbench-panel .border-\[\#202832\] { border-color: #e4e3de !important; }
+  .studio-canvas .workbench-panel .bg-\[\#0b0f13\] { background: #f3f2ed !important; }
+  .studio-canvas .workbench-panel .bg-emerald-950\/20 { background: #eef8f1 !important; }
+  .studio-canvas .workbench-panel .bg-rose-950\/20 { background: #fff1ee !important; }
+  .studio-canvas .workbench-panel .border-emerald-900\/70 { border-color: #b8d9c3 !important; }
+  .studio-canvas .workbench-panel .border-rose-900\/70 { border-color: #e0aa9d !important; }
+  .studio-canvas .workbench-panel .query-output { color: #263034; box-shadow: inset 0 0 0 1px rgba(203, 201, 194, .35); }
+  .studio-canvas .workbench-panel .button-quiet { border-color: #d9d8d2; color: #707875; }
+  .studio-canvas .workbench-panel .button-quiet:hover:not(:disabled) { border-color: #c25a42; color: #913b29; }
+  .studio-canvas .workbench-panel .icon-button { border-color: #d9d8d2; color: #707875; }
+  .studio-canvas .workbench-panel .icon-button:hover:not(:disabled) { border-color: #c25a42; color: #913b29; }
+  .studio-canvas .workbench-panel .button-secondary { border-color: #d9d8d2; background: #fffefb; color: #636b68; }
+  .studio-canvas .workbench-panel .button-secondary:hover:not(:disabled) { border-color: #c25a42; background: #fff8f5; color: #913b29; }
+  .studio-canvas .workbench-panel .tag-good { background: #eef8f1; color: #367653; }
+  .studio-canvas .workbench-panel .tag-warning { background: #fff3df; color: #98621c; }
+  .studio-canvas .workbench-panel .font-mono { color: #43504c; }
+  .studio-canvas .workbench-tabs { background: #f6f5f1; }
+  .studio-canvas .workbench-tab { min-height: 3.25rem; border-right: 1px solid #e4e3de; color: #68726e; font-size: .76rem; letter-spacing: .02em; }
+  .studio-canvas .workbench-tab:hover { background: #fffefb; color: #263034; }
+  .studio-canvas .workbench-tab-active { background: #fffefb; color: #a2402c; }
+  .studio-canvas .workbench-tab-active svg { color: #d65d43; }
+  .studio-canvas .query-output { font-size: .82rem; line-height: 1.8; }
+  .studio-canvas .workbench-panel > .border-t { border-color: #e4e3de !important; }
+  .studio-canvas .workbench-panel > .bg-\[\#0b0f13\] { border-color: #d9d8d2; background: #f3f2ed !important; }
+  .studio-canvas .workbench-panel > .bg-\[\#0b0f13\] .text-slate-400 { color: #66716c !important; }
+  .studio-canvas .mde-coverage-card,
+  .studio-canvas .threat-analysis-card { border-color: #d9d8d2; background: #f6f5f1; color: #263034; }
+  .studio-canvas .mde-coverage-card h3,
+  .studio-canvas .threat-analysis-card h3 { color: #263034; }
+  .studio-canvas .mde-coverage-card p,
+  .studio-canvas .threat-analysis-card p,
+  .studio-canvas .threat-analysis-card li { color: #58615e; }
+  .studio-canvas .mde-coverage-card .border-indigo-500\/20,
+  .studio-canvas .threat-analysis-card .border-white\/\[0\.06\] { border-color: #e4e3de; }
+  .studio-canvas .mde-coverage-card .text-indigo-400,
+  .studio-canvas .threat-analysis-card .text-cyan-400 { color: #2c7887; }
+  .studio-canvas .mde-coverage-card .text-indigo-300,
+  .studio-canvas .threat-analysis-card .text-cyan-300 { color: #367d8b; }
+  .studio-canvas .mde-coverage-card .text-indigo-200\/70 { color: #68726e; }
+  .studio-canvas .mde-coverage-card .text-zinc-300,
+  .studio-canvas .mde-coverage-card .text-zinc-200,
+  .studio-canvas .threat-analysis-card .text-zinc-300,
+  .studio-canvas .threat-analysis-card .text-zinc-200 { color: #43504c; }
+  .studio-canvas .mde-coverage-card .text-zinc-400,
+  .studio-canvas .threat-analysis-card .text-zinc-400 { color: #747d79; }
+  .studio-canvas .mde-coverage-card select,
+  .studio-canvas .mde-coverage-card input,
+  .studio-canvas .mde-coverage-card textarea { border-color: #cbc9c2; background: #fffefb; color: #263034; }
+  .studio-canvas .mde-coverage-card select:focus,
+  .studio-canvas .mde-coverage-card input:focus,
+  .studio-canvas .mde-coverage-card textarea:focus { border-color: #c25a42; box-shadow: 0 0 0 2px #ead1c9; }
+  .studio-canvas .mde-coverage-card select option { background: #fffefb; color: #263034; }
+  .studio-canvas .mde-coverage-card .bg-indigo-500\/10 { background: #edf3f4; }
+  .studio-canvas .mde-coverage-card .border-indigo-500\/30 { border-color: #b9d3d8; }
+  .studio-canvas .mde-coverage-card .text-amber-400\/90 { color: #98621c; }
+  .studio-canvas .threat-analysis-card > div { border-color: #e4e3de; }
+  .studio-canvas .threat-analysis-card .bg-\[\#07080b\] { background: #fffefb; }
+  .studio-canvas .threat-analysis-card .bg-white\/\[0\.02\] { background: #f3f2ed; }
+  .studio-canvas .threat-analysis-card .divide-white\/\[0\.04\] > :not([hidden]) ~ :not([hidden]) { border-color: #e4e3de; }
+  .studio-canvas .threat-analysis-card .text-amber-300 { color: #98621c; }
+  .studio-canvas .threat-analysis-card .text-rose-300 { color: #a2402c; }
+  .studio-canvas .threat-analysis-card table { color: #43504c; }
+  .studio-canvas .threat-analysis-card th { color: #747d79; }
+  .studio-canvas .threat-analysis-card td.text-cyan-300 { color: #2c7887; }
   .studio-page { max-width: 1120px; margin: 0 auto; }
   .studio-heading { display: flex; align-items: flex-start; gap: 0.9rem; margin: 0 auto 2rem; max-width: 1120px; }
   .studio-heading h1 { margin-top: 0.45rem; color: #20282b; font-size: clamp(1.7rem, 3vw, 2.6rem); font-weight: 700; letter-spacing: -0.055em; }

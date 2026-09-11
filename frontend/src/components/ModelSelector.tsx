@@ -20,13 +20,14 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({ isOpen, onClose, c
       <div className="provider-orbit">
         <span className="eyebrow">Available routes</span>
         <Provider name="LM Studio" note="Private · local inference" active={config.provider === 'lm_studio'} onClick={() => choose('lm_studio', 'http://localhost:1234/v1', 'qwen2.5-coder-7b-instruct')} />
-        <Provider name="Google Gemini" note="Fast · hosted reasoning" active={config.provider === 'gemini'} onClick={() => choose('gemini', 'https://generativelanguage.googleapis.com/v1beta/openai', 'gemini-2.5-flash')} />
+        <Provider name="Google Gemini" note="Fast · hosted reasoning" active={config.provider === 'gemini'} onClick={() => choose('gemini', 'https://generativelanguage.googleapis.com/v1beta/openai', 'gemini-3.6-flash')} />
         <Provider name="Cloud OpenAI" note="General · hosted reasoning" active={config.provider === 'cloud_openai'} onClick={() => choose('cloud_openai', 'https://api.openai.com/v1', 'gpt-4o')} />
+        <Provider name="Custom / Claude / Kimi" note="Any OpenAI-compatible gateway" active={config.provider === 'custom'} onClick={() => choose('custom', 'https://your-provider.example/v1', '')} />
       </div>
       <div className="model-config-sheet">
         <div className="model-config-title"><Cpu size={16} /><span>Route details</span><span className="route-live">active</span></div>
-        <label>Model identifier<input value={config.model_name || ''} onChange={(event) => onChange({ ...config, model_name: event.target.value })} placeholder="qwen2.5-coder-7b-instruct" /></label>
-        <label><span className="label-with-icon"><Server size={13} /> OpenAI-compatible base URL</span><input className="mono-input" value={config.custom_base_url || ''} onChange={(event) => onChange({ ...config, custom_base_url: event.target.value })} /></label>
+        <label>Model identifier<input value={config.model_name || ''} onChange={(event) => onChange({ ...config, model_name: event.target.value })} placeholder="Enter the exact model ID from your provider" /></label>
+        <label><span className="label-with-icon"><Server size={13} /> OpenAI-compatible base URL</span><input className="mono-input" value={config.custom_base_url || ''} onChange={(event) => onChange({ ...config, custom_base_url: event.target.value })} placeholder="https://api.example.com/v1" /></label>
         {config.provider !== 'lm_studio' && <label><span className="label-with-icon"><KeyRound size={13} /> API key</span><input className="mono-input" type="password" value={config.api_key || ''} onChange={(event) => onChange({ ...config, api_key: event.target.value })} placeholder="sk-..." /></label>}
         {saveMessage && <div className={`model-message ${saveStatus}`}>{saveStatus === 'success' ? <Check size={14} /> : null}{saveMessage}{saveStatus === 'success' && <span className="sr-only">Key saved to Vault</span>}</div>}
         <div className="model-studio-actions">{config.provider !== 'lm_studio' && <button className="studio-button secondary" onClick={saveKey} disabled={saveStatus === 'saving'}>{saveStatus === 'saving' ? <Loader2 className="animate-spin" size={14} /> : <Save size={14} />} Save key</button>}<button className="studio-button primary" onClick={onClose}>Use this route <Check size={14} /></button></div>

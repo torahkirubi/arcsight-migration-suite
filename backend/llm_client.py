@@ -463,15 +463,17 @@ def get_llm_client(
         return OpenAICompatibleClient(
             base_url=base_url,
             api_key=resolved_key,
-            default_model=model_name or "gemini-2.5-flash",
+            default_model=model_name or "gemini-3.6-flash",
             provider_name="Google Gemini",
         )
     else:
-        # Default fallback to LM Studio
-        base_url = (custom_base_url or os.environ.get("LM_STUDIO_BASE_URL", "http://localhost:1234/v1")).strip()
+        # Treat unknown providers as user-configured OpenAI-compatible endpoints.
+        # This supports vendors such as Claude, Kimi, and gateway services without
+        # hard-coding their model catalogs or API identities.
+        base_url = (custom_base_url or "").strip()
         return OpenAICompatibleClient(
             base_url=base_url,
-            api_key=clean_key or "lm-studio",
-            default_model=model_name or "qwen2.5-coder-7b-instruct",
-            provider_name="LM Studio (Local)",
+            api_key=clean_key,
+            default_model=model_name or "default-model",
+            provider_name=provider or "Custom Endpoint",
         )
