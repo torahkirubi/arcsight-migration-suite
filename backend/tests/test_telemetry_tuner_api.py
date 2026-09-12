@@ -374,6 +374,33 @@ class TestTelemetryTunerAPI(unittest.TestCase):
         self.assertIn("For hostnames or machines, ALWAYS use: Computer", NOISE_DIAGNOSTICS_SYSTEM_PROMPT)
         self.assertIn("For usernames, ALWAYS use: AccountName", NOISE_DIAGNOSTICS_SYSTEM_PROMPT)
 
+    def test_diagnose_telemetry_noise_normalizes_labeled_entity_strings(self):
+        """Labeled string entities are normalized before exclusion generation."""
+        import asyncio
+        from backend.app import diagnose_telemetry_noise
+
+        mock_llm = MagicMock()
+        mock_llm.complete = AsyncMock(return_value=json.dumps({
+            "noise_source": "Scanner",
+            "affected_entities": [
+                "AccountName: svc-scanner",
+                "Computer: DC-01.corp.local",
+            ],
+            "mitigation_steps": ["Exclude scanner noise"],
+        }))
+
+        result = asyncio.run(
+            diagnose_telemetry_noise(
+                "SecurityEvents_CL | summarize count() by Computer, AccountName",
+                [{"Computer": "DC-01.corp.local", "AccountName": "svc-scanner"}],
+                mock_llm,
+            )
+        )
+        self.assertEqual(result["affected_entities"], [
+            {"field": "AccountName", "value": "svc-scanner"},
+            {"field": "Computer", "value": "DC-01.corp.local"},
+        ])
+
     def test_tune_telemetry_unpacks_real_records_and_applies_exclusions_without_generic_object(self):
         """Assert that tune_telemetry unpacks real records from Sentinel and applies exclusions without 'Object'."""
         mock_sentinel_res = {

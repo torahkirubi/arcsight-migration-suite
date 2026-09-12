@@ -64,6 +64,17 @@ CANONICAL_FIELDS: Dict[str, str] = {
 SUPPORTED_ENTITY_FIELDS = frozenset(CANONICAL_FIELDS.values())
 
 
+def _parse_labeled_entity(value: Any) -> Optional[Dict[str, str]]:
+    """Parse an explicit `Field: Value` entity without guessing its column."""
+    if not isinstance(value, str) or ":" not in value:
+        return None
+    field_name, entity_value = value.split(":", 1)
+    pair = _normalize_entity_pair(field_name.strip(), entity_value.strip())
+    if not pair or pair[0] not in SUPPORTED_ENTITY_FIELDS:
+        return None
+    return {"field": pair[0], "value": pair[1]}
+
+
 def normalize_structured_entities(entities: Any) -> List[Dict[str, str]]:
     """Accept only explicit field/value objects for safe KQL generation."""
     if not isinstance(entities, list):
@@ -71,6 +82,10 @@ def normalize_structured_entities(entities: Any) -> List[Dict[str, str]]:
 
     normalized: List[Dict[str, str]] = []
     for entity in entities:
+        labeled = _parse_labeled_entity(entity)
+        if labeled:
+            normalized.append(labeled)
+            continue
         if not isinstance(entity, dict):
             continue
         if "field" in entity and "value" in entity:
@@ -193,6 +208,11 @@ def apply_exclusions(
         # Handle string or primitive item
         str_item = str(item).strip()
         if not str_item:
+            continue
+
+        labeled = _parse_labeled_entity(str_item)
+        if labeled:
+            _add_single_pair(labeled["field"], labeled["value"])
             continue
 
         # Defensive unpacking for stringified dictionaries (e.g. "{'AccountName': 'svc-scanner'}")
