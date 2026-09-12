@@ -218,7 +218,7 @@ OPENAI_API_KEY=sk-...
 
 # Application Security & Vault
 VAULT_MASTER_KEY=
-JWT_SECRET_KEY=arcsight-migration-suite-secret-key-super-secure
+JWT_SECRET_KEY=<generate-a-long-random-secret>
 VAULT_DB_PATH=/app/backend/data/vault.db
 
 # Microsoft Sentinel & Azure Monitor Logs Ingestion API

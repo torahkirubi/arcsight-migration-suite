@@ -30,7 +30,7 @@ services:
       - GIT_READY_OUTPUT_DIR=/app/backend/git_ready_output
       # LLM Providers (overrideable via .env)
       - GEMINI_API_KEY=${GEMINI_API_KEY}
-      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-3.6-flash}
+      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.5-flash}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       # Microsoft Sentinel / Log Analytics (overrideable via .env)
       - SENTINEL_WORKSPACE_ID=${SENTINEL_WORKSPACE_ID}

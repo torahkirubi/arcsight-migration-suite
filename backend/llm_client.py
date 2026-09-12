@@ -85,6 +85,7 @@ class OpenAICompatibleClient(BaseLLMClient):
         api_key: Optional[str] = None,
         default_model: Optional[str] = None,
         provider_name: str = "LM Studio",
+        allow_environment_key: bool = True,
     ):
         self.base_url = (
             base_url
@@ -99,9 +100,9 @@ class OpenAICompatibleClient(BaseLLMClient):
             or "gemini" in provider_name.lower()
             or "google" in provider_name.lower()
         )
-        if not raw_key and "cloud" in provider_name.lower():
+        if not raw_key and allow_environment_key and "cloud" in provider_name.lower():
             raw_key = (os.environ.get("OPENAI_API_KEY") or "").strip()
-        elif not raw_key and ("gemini" in provider_name.lower() or "google" in provider_name.lower()):
+        elif not raw_key and allow_environment_key and ("gemini" in provider_name.lower() or "google" in provider_name.lower()):
             raw_key = (os.environ.get("GEMINI_API_KEY") or os.environ.get("gemini_api_key") or "").strip()
 
         if raw_key.lower().startswith("bearer "):
@@ -121,6 +122,7 @@ class OpenAICompatibleClient(BaseLLMClient):
             or "qwen2.5-coder-7b-instruct"
         )
         self.provider_name = provider_name
+        self.allow_environment_key = allow_environment_key
 
     def _resolve_api_key(self, api_key_override: Optional[str] = None) -> str:
         """Dynamically resolves the API key with priority: override -> instance -> environment."""
@@ -129,9 +131,9 @@ class OpenAICompatibleClient(BaseLLMClient):
             key = (self.api_key or "").strip()
         if key == "not-needed":
             return key
-        if not key and "cloud" in self.provider_name.lower():
+        if not key and "cloud" in self.provider_name.lower() and self.allow_environment_key:
             key = (os.environ.get("OPENAI_API_KEY") or "").strip()
-        if not key and ("gemini" in self.provider_name.lower() or "google" in self.provider_name.lower()):
+        if not key and self.allow_environment_key and ("gemini" in self.provider_name.lower() or "google" in self.provider_name.lower()):
             key = (os.environ.get("GEMINI_API_KEY") or os.environ.get("gemini_api_key") or "").strip()
         if key.lower().startswith("bearer "):
             key = key[7:].strip()
@@ -502,13 +504,14 @@ def get_llm_client(
         )
     elif provider_clean in ("cloud_openai", "openai"):
         base_url = (custom_base_url or os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")).strip()
-        env_key = (os.environ.get("OPENAI_API_KEY") or "").strip()
+        env_key = "" if custom_base_url else (os.environ.get("OPENAI_API_KEY") or "").strip()
         resolved_key = clean_key if clean_key else env_key
         return OpenAICompatibleClient(
             base_url=base_url,
             api_key=resolved_key,
             default_model=model_name or "gpt-4o",
             provider_name="Cloud OpenAI",
+            allow_environment_key=not bool(custom_base_url),
         )
     elif provider_clean in ("cloud_custom", "custom"):
         base_url = (custom_base_url or "http://localhost:11434/v1").strip()
@@ -524,13 +527,14 @@ def get_llm_client(
             or os.environ.get("GEMINI_BASE_URL")
             or "https://generativelanguage.googleapis.com/v1beta/openai"
         ).strip().rstrip("/")
-        env_key = (os.environ.get("GEMINI_API_KEY") or "").strip()
+        env_key = "" if custom_base_url else (os.environ.get("GEMINI_API_KEY") or "").strip()
         resolved_key = clean_key if clean_key else env_key
         return OpenAICompatibleClient(
             base_url=base_url,
             api_key=resolved_key,
-            default_model=model_name or "gemini-3.6-flash",
+            default_model=model_name or os.environ.get("GEMINI_MODEL") or "gemini-2.5-flash",
             provider_name="Google Gemini",
+            allow_environment_key=not bool(custom_base_url),
         )
     else:
         # Treat unknown providers as user-configured OpenAI-compatible endpoints.

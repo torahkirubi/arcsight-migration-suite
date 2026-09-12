@@ -18,7 +18,10 @@ import logging
 import os
 import re
 import time
+import ipaddress
+import socket
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
 
@@ -197,6 +200,59 @@ def _validate_runtime_security() -> None:
 
 _validate_runtime_security()
 
+
+def _safe_health_endpoint(custom_base_url: Optional[str]) -> Optional[str]:
+    """Restrict unauthenticated probes to known provider or local development hosts."""
+    if not custom_base_url:
+        return None
+    parsed = urlparse(custom_base_url)
+    host = (parsed.hostname or "").lower()
+    if parsed.scheme not in {"http", "https"} or not host:
+        raise HTTPException(status_code=400, detail="Invalid health-check endpoint")
+    allowed_hosts = {
+        "localhost", "127.0.0.1", "::1",
+        "api.openai.com", "generativelanguage.googleapis.com",
+    }
+    if host in allowed_hosts:
+        return custom_base_url
+    try:
+        addresses = {
+            item[4][0]
+            for item in socket.getaddrinfo(host, parsed.port or 443, type=socket.SOCK_STREAM)
+        }
+    except socket.gaierror as exc:
+        raise HTTPException(status_code=400, detail="Health-check endpoint could not be resolved") from exc
+    if any(
+        ipaddress.ip_address(address).is_private
+        or ipaddress.ip_address(address).is_loopback
+        or ipaddress.ip_address(address).is_link_local
+        for address in addresses
+    ):
+        raise HTTPException(status_code=400, detail="Private health-check endpoints are not allowed")
+    raise HTTPException(status_code=400, detail="Custom health-check endpoints are not allowlisted")
+
+
+def _validate_sentinel_query(query: str) -> None:
+    """Enforce a bounded, read-only Sentinel query surface for telemetry diagnostics."""
+    if not isinstance(query, str) or not query.strip() or ";" in query:
+        raise HTTPException(status_code=400, detail="Invalid KQL query")
+    table_match = re.match(r"\s*([A-Za-z_][A-Za-z0-9_]*)", query)
+    allowed_tables = {
+        "SecurityEvent", "SecurityEvents_CL", "DeviceProcessEvents",
+        "CommonSecurityLog", "SigninLogs", "CommonSignInLogs",
+        "ASimProcessEventLogs", "DeviceNetworkEvents",
+    }
+    configured = os.environ.get("SENTINEL_ALLOWED_TABLES", "")
+    allowed_tables.update(item.strip() for item in configured.split(",") if item.strip())
+    if not table_match or table_match.group(1) not in allowed_tables:
+        raise HTTPException(status_code=400, detail="KQL table is not approved")
+    if re.search(
+        r"\b(union|externaldata|datatable|evaluate|adx|http_request|set\s+query_parameters)\b",
+        query,
+        re.IGNORECASE,
+    ):
+        raise HTTPException(status_code=400, detail="KQL operator is not permitted")
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -327,9 +383,10 @@ async def _perform_health_check(
     }
 
     # 2. LLM Client status (never logs api_key)
+    safe_base_url = _safe_health_endpoint(custom_base_url)
     llm = get_llm_client(
         provider=provider or "lm_studio",
-        custom_base_url=custom_base_url,
+        custom_base_url=safe_base_url,
         api_key=api_key,
     )
     llm_task = asyncio.create_task(llm.health_check())
@@ -1539,6 +1596,7 @@ async def tune_telemetry(
         current_threshold = payload.get("current_threshold", 1)
     if current_threshold is None:
         current_threshold = 1
+    _validate_sentinel_query(kql_query)
 
     # Retrieve Sentinel credentials from the encrypted vault.
     vault = VaultService()

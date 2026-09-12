@@ -98,6 +98,31 @@ class SplunkTestClient:
         return None
 
     @staticmethod
+    def validate_read_only_query(query: str) -> None:
+        """Reject SPL commands that mutate Splunk or access unapproved indexes."""
+        if not query.strip():
+            raise SplunkError("SPL query cannot be empty")
+        lowered = query.lower()
+        if ";" in query:
+            raise SplunkError("Multiple SPL statements are not allowed")
+        forbidden = (
+            "loadjob", "savedsearch", "script", "map", "rest", "inputlookup",
+            "outputlookup", "collect", "sendemail", "delete",
+        )
+        if any(token in lowered for token in forbidden):
+            raise SplunkError("SPL command is not permitted by the read-only policy")
+        indexes = re.findall(r"\bindex\s*=\s*([A-Za-z0-9_.-]+)", query, re.IGNORECASE)
+        allowed_indexes = {
+            value.strip() for value in os.environ.get(
+                "SPLUNK_ALLOWED_INDEXES", "main,security,notable"
+            ).split(",") if value.strip()
+        }
+        if not indexes or any(index not in allowed_indexes for index in indexes):
+            raise SplunkError(
+                "SPL query must target an approved index. Configure SPLUNK_ALLOWED_INDEXES."
+            )
+
+    @staticmethod
     def _parse_splunk_error(text: str, status_code: int) -> str:
         """Extracts clean, readable error message from Splunk's JSON or XML response."""
         clean = text.strip()
@@ -220,6 +245,8 @@ class SplunkTestClient:
             inner = query[1:-1].strip()
             if any(c in inner for c in ["\n", "|", " "]):
                 query = inner
+
+        self.validate_read_only_query(query)
 
         # Ensure query starts with search if not piped
         if not query.startswith("|") and not query.startswith("search"):

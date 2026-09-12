@@ -17,6 +17,7 @@ from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 import os
+import secrets
 import sqlite3
 from typing import Any, Dict, List, Optional
 
@@ -147,14 +148,10 @@ def resolve_vault_db_path() -> str:
 DEFAULT_VAULT_DB_PATH = resolve_vault_db_path()
 APP_ENV = os.environ.get("APP_ENV", "development").lower()
 DEFAULT_ADMIN_USER = os.environ.get("ADMIN_USERNAME", "admin")
-DEFAULT_ADMIN_PASSWORD = os.environ.get(
-    "ADMIN_PASSWORD",
-    "" if APP_ENV == "production" else "valid_password_123",
-)
-JWT_SECRET_KEY = os.environ.get(
-    "JWT_SECRET_KEY",
-    "" if APP_ENV == "production" else "arcsight-migration-suite-secret-key-super-secure",
-)
+DEFAULT_ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "").strip()
+JWT_SECRET_KEY = os.environ.get("JWT_SECRET_KEY", "").strip()
+if not JWT_SECRET_KEY and APP_ENV != "production":
+    JWT_SECRET_KEY = secrets.token_urlsafe(32)
 JWT_ALGORITHM = "HS256"
 
 
@@ -315,6 +312,16 @@ class SQLiteFallbackEngine:
 
 def seed_default_admin(engine):
     """Ensures default admin credentials exist in users table."""
+    if not DEFAULT_ADMIN_PASSWORD:
+        conn = engine.raw_connection() if hasattr(engine, "raw_connection") else None
+        if conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT id, hashed_password FROM users WHERE username = ?", (DEFAULT_ADMIN_USER,))
+            row = cursor.fetchone()
+            if row and verify_password("valid_password_123", row[1]):
+                cursor.execute("DELETE FROM users WHERE id = ?", (row[0],))
+                conn.commit()
+        return
     try:
         conn = engine.raw_connection() if hasattr(engine, "raw_connection") else None
         if conn:
@@ -492,6 +499,8 @@ class VaultService:
 
 def create_jwt_token(username: str, expires_minutes: int = 60) -> str:
     """Creates a signed JWT bearer token with subject and expiration."""
+    if not JWT_SECRET_KEY:
+        raise RuntimeError("JWT_SECRET_KEY must be configured before issuing tokens.")
     now = datetime.now(timezone.utc)
     payload = {
         "sub": username,
@@ -506,6 +515,8 @@ def create_jwt_token(username: str, expires_minutes: int = 60) -> str:
 
 def verify_jwt_token(token: str) -> Optional[Dict[str, Any]]:
     """Decodes and validates a JWT bearer token."""
+    if not JWT_SECRET_KEY:
+        return None
     try:
         payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
         return payload
@@ -515,7 +526,7 @@ def verify_jwt_token(token: str) -> Optional[Dict[str, Any]]:
 
 def authenticate_user(username: str, password: str) -> bool:
     """Validates user credentials against configured admin or SQLite database."""
-    if username == DEFAULT_ADMIN_USER and password == DEFAULT_ADMIN_PASSWORD:
+    if DEFAULT_ADMIN_PASSWORD and username == DEFAULT_ADMIN_USER and password == DEFAULT_ADMIN_PASSWORD:
         return True
     try:
         engine = init_auth_vault_db()
