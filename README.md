@@ -146,9 +146,9 @@ The application interface is intentionally crafted as a **Data-Dense SOC Dashboa
 Create a `.env` file in the root directory (this file is excluded from Git):
 ```bash
 # LLM Configuration
-# For Google Gemini (via OpenAI-compatible endpoint or OpenRouter):
-OPENAI_API_KEY=your_gemini_api_key_here
-OPENAI_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai/
+# For Google Gemini native REST:
+GEMINI_API_KEY=your_gemini_api_key_here
+GEMINI_BASE_URL=https://generativelanguage.googleapis.com/v1beta
 
 # Or for local air-gapped models via LM Studio:
 LM_STUDIO_BASE_URL=http://host.docker.internal:1234/v1

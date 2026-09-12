@@ -20,7 +20,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({ isOpen, onClose, c
       <div className="provider-orbit">
         <span className="eyebrow">Available routes</span>
         <Provider name="LM Studio" note="Private · local inference" active={config.provider === 'lm_studio'} onClick={() => choose('lm_studio', 'http://localhost:1234/v1', 'qwen2.5-coder-7b-instruct')} />
-        <Provider name="Google Gemini" note="Fast · hosted reasoning" active={config.provider === 'gemini'} onClick={() => choose('gemini', 'https://generativelanguage.googleapis.com/v1beta/openai', 'gemini-2.5-flash')} />
+        <Provider name="Google Gemini" note="Fast · hosted reasoning" active={config.provider === 'gemini'} onClick={() => choose('gemini', 'https://generativelanguage.googleapis.com/v1beta', 'gemini-2.5-flash')} />
         <Provider name="Cloud OpenAI" note="General · hosted reasoning" active={config.provider === 'cloud_openai'} onClick={() => choose('cloud_openai', 'https://api.openai.com/v1', 'gpt-4o')} />
         <Provider name="Custom / Claude / Kimi" note="Any OpenAI-compatible gateway" active={config.provider === 'custom'} onClick={() => choose('custom', 'https://your-provider.example/v1', '')} />
       </div>

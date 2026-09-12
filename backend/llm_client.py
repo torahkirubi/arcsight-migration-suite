@@ -193,7 +193,7 @@ class OpenAICompatibleClient(BaseLLMClient):
         messages.append({"role": "user", "content": prompt})
         payload = (
             {
-                "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+                "contents": [{"parts": [{"text": prompt}]}],
                 "generationConfig": {
                     "temperature": temperature,
                     "maxOutputTokens": max_tokens,
@@ -528,7 +528,7 @@ def get_llm_client(
         base_url = (
             custom_base_url
             or os.environ.get("GEMINI_BASE_URL")
-            or "https://generativelanguage.googleapis.com/v1beta/openai"
+            or "https://generativelanguage.googleapis.com/v1beta"
         ).strip().rstrip("/")
         env_key = "" if custom_base_url else (os.environ.get("GEMINI_API_KEY") or "").strip()
         resolved_key = clean_key if clean_key else env_key

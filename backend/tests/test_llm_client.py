@@ -137,11 +137,12 @@ class TestLLMClientAuth(unittest.TestCase):
                 called_url = call_args[0]
                 called_headers = call_kwargs.get("headers", {})
 
-                self.assertIn(
-                    "/v1beta/openai/chat/completions",
-                    called_url,
+                self.assertIn("/v1beta/models/gemini-2.5-flash:generateContent", called_url)
+                self.assertNotIn("/openai/", called_url)
+                self.assertEqual(
+                    call_kwargs["json"]["contents"],
+                    [{"parts": [{"text": "hello"}]}],
                 )
-                self.assertNotIn("/openai/models/", called_url)
                 # Assert ?key= is appended
                 self.assertIn("key=AIzaSy-sample-key-12345", called_url)
                 # Assert Authorization: Bearer is present
