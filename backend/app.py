@@ -162,6 +162,7 @@ from backend.threat_analysis_prompts import (
 from backend.splunk_client import SplunkTestClient
 from backend.sentinel_client import SentinelClient
 from backend.telemetry_tuner import apply_exclusions, calculate_dynamic_threshold, normalize_structured_entities
+from backend.schemas.exclusion_ir import RuleTuningAnalysis
 from backend.audit_store import audit_store
 from backend.git_exporter import generate_git_ready_text, save_git_ready_runbook
 from backend.auth_vault import (
@@ -1328,11 +1329,11 @@ CRITICAL FIELD RULES:
    - For commands, ALWAYS use: CommandLine
    - For event IDs, ALWAYS use: EventID
 3. When constructing the auto-mitigated query, inject exclusions that specifically target noisy entities (such as AccountName !in ('svc-scanner', 'svc-backup') or specific CommandLine patterns) rather than filtering out all hostnames.
-4. Return ONLY valid JSON matching this schema:
-   {"noise_source": "string", "affected_entities": [
-     {"field": "AccountName|Computer|ProcessName|CommandLine|EventID|IpAddress", "value": "string"}
-   ], "mitigation_steps": ["string"]}
-   Every affected entity MUST include its exact column name. Never return plain strings,
+4. Return ONLY valid JSON matching the RuleTuningAnalysis schema:
+   {"noise_summary": "string", "recommended_threshold": 1, "exclusions": [
+     {"type": "single_field", "field": "AccountName", "operator": "!in", "values": ["svc-scanner"]}
+   ]}
+   Use only columns present in the query's target table. Never return plain strings,
    Python dict syntax, inferred fields, or a generated KQL query.
 """
 
@@ -1365,6 +1366,7 @@ async def diagnose_telemetry_noise(
                 system_prompt=NOISE_DIAGNOSTICS_SYSTEM_PROMPT,
                 temperature=0.1,
                 max_tokens=8192,
+                response_schema=RuleTuningAnalysis.model_json_schema(),
             )
         else:
             raw_response = llm_client.complete(
@@ -1372,6 +1374,7 @@ async def diagnose_telemetry_noise(
                 system_prompt=NOISE_DIAGNOSTICS_SYSTEM_PROMPT,
                 temperature=0.1,
                 max_tokens=8192,
+                response_schema=RuleTuningAnalysis.model_json_schema(),
             )
 
         if not raw_response or not isinstance(raw_response, str):
@@ -1418,11 +1421,32 @@ async def diagnose_telemetry_noise(
                     parsed["mitigation_steps"] = [val.strip('"')]
 
         # Extract values with support for alternate aliases
-        noise_source = str(parsed.get("noise_source") or parsed.get("root_cause") or "").strip()
+        noise_source = str(
+            parsed.get("noise_source")
+            or parsed.get("root_cause")
+            or parsed.get("noise_summary")
+            or ""
+        ).strip()
         if not noise_source:
             noise_source = "Unknown Noise Source"
 
         raw_entities = parsed.get("affected_entities") or parsed.get("noise_entities") or []
+        if not raw_entities and isinstance(parsed.get("exclusions"), list):
+            raw_entities = []
+            for exclusion in parsed["exclusions"]:
+                if not isinstance(exclusion, dict):
+                    continue
+                if exclusion.get("type") == "single_field":
+                    raw_entities.extend(
+                        {"field": exclusion.get("field"), "value": value}
+                        for value in exclusion.get("values", [])
+                    )
+                elif exclusion.get("type") == "compound":
+                    raw_entities.append({
+                        str(condition.get("field")): condition.get("value")
+                        for condition in exclusion.get("conditions", [])
+                        if isinstance(condition, dict)
+                    })
         if not isinstance(raw_entities, list):
             raw_entities = [raw_entities]
         affected_entities = normalize_structured_entities(raw_entities)

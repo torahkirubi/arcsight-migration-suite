@@ -4,7 +4,13 @@ telemetry_tuner.py - Dynamic threshold calculation and telemetry baseline tuning
 
 import math
 import re
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Sequence, Tuple
+
+from backend.schemas.exclusion_ir import (
+    CompoundExclusion,
+    RuleTuningAnalysis,
+    SingleFieldExclusion,
+)
 
 
 def calculate_dynamic_threshold(
@@ -60,8 +66,210 @@ CANONICAL_FIELDS: Dict[str, str] = {
     "command": "CommandLine",
     "eventid": "EventID",
     "ipaddress": "IpAddress",
+    "devicename": "DeviceName",
+    "filename": "FileName",
+    "processcommandline": "ProcessCommandLine",
+    "userprincipalname": "UserPrincipalName",
+    "appdisplayname": "AppDisplayName",
+    "sourceusername": "SourceUserName",
+    "sourceip": "SourceIP",
+    "destinationip": "DestinationIP",
 }
 SUPPORTED_ENTITY_FIELDS = frozenset(CANONICAL_FIELDS.values())
+
+TABLE_SCHEMA_REGISTRY: Dict[str, frozenset[str]] = {
+    "securityevents_cl": frozenset({"AccountName", "Computer", "ProcessName", "CommandLine", "EventID", "IpAddress"}),
+    "securityevent": frozenset({"AccountName", "Computer", "ProcessName", "CommandLine", "EventID", "IpAddress", "TargetAccount"}),
+    "deviceprocessevents": frozenset({"AccountName", "DeviceName", "FileName", "ProcessCommandLine", "ProcessName"}),
+    "signinlogs": frozenset({"UserPrincipalName", "IPAddress", "IpAddress", "AppDisplayName"}),
+    "commonsignallog": frozenset({"SourceUserName", "DeviceName", "SourceIP", "DestinationIP"}),
+}
+
+
+def table_schema(table: str) -> frozenset[str]:
+    """Return the allowlisted columns for a known Log Analytics table."""
+    return TABLE_SCHEMA_REGISTRY.get(table.strip().lower(), frozenset())
+
+
+def _query_table(raw_kql: str) -> str:
+    match = re.match(r"\s*([A-Za-z_][A-Za-z0-9_]*)", raw_kql or "")
+    return match.group(1) if match else ""
+
+
+def resolve_field(field: str, raw_kql: str = "") -> Optional[str]:
+    """Canonicalize a field and validate it against the query's known table."""
+    canonical = CANONICAL_FIELDS.get(field.strip().lower(), field.strip())
+    if not canonical:
+        return None
+    schema = table_schema(_query_table(raw_kql))
+    if schema and canonical not in schema:
+        return None
+    return canonical
+
+
+class KQLQueryCompiler:
+    """Render validated exclusion IR into deterministic KQL pipeline clauses."""
+
+    def __init__(self, raw_kql: str, default_target_field: str = "Computer"):
+        self.raw_kql = raw_kql
+        self.schema = table_schema(_query_table(raw_kql))
+        self.default_target_field = default_target_field
+
+    def _field(self, value: str) -> str:
+        field = resolve_field(value, self.raw_kql)
+        if not field:
+            raise ValueError(f"Field {value!r} is not allowed for {_query_table(self.raw_kql) or 'query'}")
+        return field
+
+    @staticmethod
+    def _quote(value: str) -> str:
+        return "'" + str(value).replace(r"\'", "'").replace("'", r"\'") + "'"
+
+    def render(self, analysis: RuleTuningAnalysis | Sequence[Any]) -> str:
+        structured_sequence = (
+            isinstance(analysis, (list, tuple))
+            and all(isinstance(item, (SingleFieldExclusion, CompoundExclusion)) for item in analysis)
+        )
+        legacy_mode = not isinstance(analysis, RuleTuningAnalysis) and not structured_sequence
+        if isinstance(analysis, RuleTuningAnalysis):
+            exclusions = analysis.exclusions
+        elif structured_sequence:
+            exclusions = analysis
+        else:
+            exclusions = self._legacy_exclusions(analysis)
+        clauses: List[str] = []
+        for exclusion in exclusions or []:
+            if isinstance(exclusion, dict):
+                if exclusion.get("type") == "single_field":
+                    exclusion = SingleFieldExclusion(**exclusion)
+                elif exclusion.get("type") == "compound":
+                    exclusion = CompoundExclusion(**exclusion)
+            if isinstance(exclusion, SingleFieldExclusion):
+                field = resolve_field(str(exclusion.field), self.raw_kql) if legacy_mode else self._field(exclusion.field)
+                if legacy_mode and not field:
+                    field = CANONICAL_FIELDS.get(str(exclusion.field).lower(), str(exclusion.field))
+                if not field:
+                    continue
+                values = ", ".join(self._quote(v) for v in exclusion.values)
+                if exclusion.operator == "!in":
+                    clauses.append(f"| where {field} !in ({values})")
+                else:
+                    clauses.extend(f"| where {field} {exclusion.operator} {self._quote(v)}" for v in exclusion.values)
+            else:
+                conditions = []
+                for condition in exclusion.conditions:
+                    condition_field = condition.get("field") if isinstance(condition, dict) else condition.field
+                    condition_operator = condition.get("operator") if isinstance(condition, dict) else condition.operator
+                    condition_value = condition.get("value") if isinstance(condition, dict) else condition.value
+                    field = resolve_field(str(condition_field), self.raw_kql) if legacy_mode else self._field(condition_field)
+                    if legacy_mode and not field:
+                        field = CANONICAL_FIELDS.get(str(condition_field).lower(), str(condition_field))
+                    if not field:
+                        continue
+                    operator = "has" if condition_operator == "contains" else condition_operator
+                    conditions.append(f"{field} {operator} {self._quote(condition_value)}")
+                clauses.append(f"| where not ({' and '.join(conditions)})")
+        return self._insert(clauses)
+
+    def _legacy_exclusions(self, entities: Sequence[Any]) -> List[Any]:
+        grouped: Dict[str, List[str]] = {}
+        compounds: List[CompoundExclusion] = []
+        for item in entities:
+            if isinstance(item, str) and item.strip().startswith(("{", "[")):
+                try:
+                    import ast
+                    parsed = ast.literal_eval(item)
+                    if isinstance(parsed, dict):
+                        item = parsed
+                except (SyntaxError, ValueError):
+                    try:
+                        import json
+                        parsed = json.loads(item)
+                        if isinstance(parsed, dict):
+                            item = parsed
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+            if isinstance(item, dict) and len(item) > 1 and "field" not in item:
+                conditions = [
+                    {"field": key, "operator": "contains" if "command" in key.lower() else "==", "value": str(value)}
+                    for key, value in item.items() if value is not None
+                ]
+                if len(conditions) >= 2:
+                    compounds.append(CompoundExclusion(conditions=conditions))
+                continue
+            if isinstance(item, dict):
+                field = item.get("field") or item.get("type") or next(iter(item), None)
+                value = item.get("value") if "value" in item else item.get(field)
+            else:
+                labeled = _parse_labeled_entity(item)
+                if labeled:
+                    field, value = labeled["field"], labeled["value"]
+                else:
+                    field, value = None, item
+            if field is None:
+                field = self._legacy_target_field()
+            canonical = resolve_field(str(field), self.raw_kql) or CANONICAL_FIELDS.get(
+                str(field).lower(), str(field)
+            )
+            if canonical and value is not None:
+                grouped.setdefault(canonical, []).extend(
+                    str(v) for v in (value if isinstance(value, (list, tuple, set)) else [value]) if str(v).strip()
+                )
+        exclusions: List[Any] = [
+            SingleFieldExclusion(field=field, values=list(dict.fromkeys(values)))
+            for field, values in grouped.items()
+        ]
+        return exclusions + compounds
+
+    def _legacy_target_field(self) -> str:
+        if self.default_target_field != "Computer":
+            return self.default_target_field
+        if self.schema:
+            candidates = [field for field in ("Computer", "AccountName", "ProcessName") if field in self.schema]
+            mentioned = [field for field in candidates if re.search(rf"\b{re.escape(field)}\b", self.raw_kql, re.I)]
+            if candidates:
+                if "Computer" not in mentioned and "AccountName" in mentioned:
+                    return "AccountName"
+                return mentioned[0] if mentioned else candidates[0]
+        return self.default_target_field
+
+    def _insert(self, clauses: List[str]) -> str:
+        if not clauses:
+            return self.raw_kql
+        block = "\n".join(clauses)
+        match = re.search(r"(?i)(\|\s*(?:summarize|count|top)\b)", self.raw_kql)
+        if not match:
+            return f"{self.raw_kql.rstrip()}\n{block}" if "\n" in self.raw_kql else f"{self.raw_kql.rstrip()} {block}"
+        line_start = self.raw_kql.rfind("\n", 0, match.start())
+        insertion = match.start() if line_start == -1 else line_start + 1
+        return f"{self.raw_kql[:insertion]}{block}\n{self.raw_kql[insertion:]}"
+
+
+def validate_kql_syntax(query: str) -> None:
+    """Run parser-independent structural checks before a query is submitted."""
+    if not isinstance(query, str) or not query.strip():
+        raise ValueError("KQL query is empty")
+    if not re.match(r"\s*[A-Za-z_][A-Za-z0-9_]*", query):
+        raise ValueError("KQL query must start with a table identifier")
+    paren_depth = 0
+    in_string = False
+    escaped = False
+    for char in query:
+        if char == "\\" and in_string and not escaped:
+            escaped = True
+            continue
+        if char == "'" and not escaped:
+            in_string = not in_string
+        if not in_string:
+            if char == "(":
+                paren_depth += 1
+            elif char == ")":
+                paren_depth -= 1
+                if paren_depth < 0:
+                    raise ValueError("KQL query has an unmatched closing parenthesis")
+        escaped = False
+    if in_string or paren_depth:
+        raise ValueError("KQL query has unbalanced quotes or parentheses")
 
 
 def _parse_labeled_entity(value: Any) -> Optional[Dict[str, str]]:
@@ -147,149 +355,12 @@ def apply_exclusions(
     entities: Optional[List[Any]],
     target_field: str = "Computer",
 ) -> str:
-    """
-    Injects negative exclusion blocks for identified entities into a raw KQL query.
-
-    Normalizes entities (dictionaries, stringified dictionaries, or plain strings):
-    - Single-key dicts and primitives are grouped by column: | where <Field> !in ('val1', 'val2')
-    - Multi-key compound dicts generate compound clauses: | where not (<field1> == 'v1' and <field2> has 'v2')
-    Injected immediately before aggregate clauses (| summarize or | count) or appended cleanly.
-    """
+    """Compile structured or legacy entities into deterministic KQL exclusions."""
     if raw_kql is None:
         return ""
     if not isinstance(raw_kql, str) or not raw_kql.strip():
         return raw_kql
     if not entities:
         return raw_kql
-
-    grouped_single_exclusions: Dict[str, List[str]] = {}
-    compound_clauses: List[str] = []
-
-    def _add_single_pair(f: str, v: str):
-        if f not in grouped_single_exclusions:
-            grouped_single_exclusions[f] = []
-        if v not in grouped_single_exclusions[f]:
-            grouped_single_exclusions[f].append(v)
-
-    def _process_dict(d: Dict[str, Any]):
-        if "field" in d and "value" in d and len(d) == 2:
-            pair = _normalize_entity_pair(str(d["field"]), d["value"])
-            if pair:
-                _add_single_pair(pair[0], pair[1])
-        elif "name" in d and "type" in d and len(d) == 2:
-            pair = _normalize_entity_pair(str(d["type"]), d["name"])
-            if pair:
-                _add_single_pair(pair[0], pair[1])
-        elif len(d) == 1:
-            for k, v in d.items():
-                if isinstance(v, (list, tuple, set)):
-                    for sub_v in v:
-                        pair = _normalize_entity_pair(str(k), sub_v)
-                        if pair:
-                            _add_single_pair(pair[0], pair[1])
-                else:
-                    pair = _normalize_entity_pair(str(k), v)
-                    if pair:
-                        _add_single_pair(pair[0], pair[1])
-        elif len(d) > 1:
-            clause = _format_compound_dict_clause(d)
-            if clause and clause not in compound_clauses:
-                compound_clauses.append(clause)
-
-    for item in entities:
-        if item is None:
-            continue
-
-        # Handle dictionaries directly
-        if isinstance(item, dict):
-            _process_dict(item)
-            continue
-
-        # Handle string or primitive item
-        str_item = str(item).strip()
-        if not str_item:
-            continue
-
-        labeled = _parse_labeled_entity(str_item)
-        if labeled:
-            _add_single_pair(labeled["field"], labeled["value"])
-            continue
-
-        # Defensive unpacking for stringified dictionaries (e.g. "{'AccountName': 'svc-scanner'}")
-        if str_item.startswith("{") and str_item.endswith("}"):
-            parsed_dict = None
-            try:
-                import ast
-                parsed = ast.literal_eval(str_item)
-                if isinstance(parsed, dict):
-                    parsed_dict = parsed
-            except Exception:
-                pass
-            if parsed_dict is None:
-                try:
-                    import json
-                    parsed = json.loads(str_item)
-                    if isinstance(parsed, dict):
-                        parsed_dict = parsed
-                except Exception:
-                    pass
-
-            if isinstance(parsed_dict, dict):
-                _process_dict(parsed_dict)
-                continue
-
-        # Plain string entity: resolve field using heuristics / target_field
-        effective_field = target_field
-        if effective_field == "Computer":
-            has_account_field = bool(re.search(r"\bAccountName\b", raw_kql, re.IGNORECASE))
-            looks_like_account = bool(re.search(
-                r"^(?:svc[-_]|adm[-_]|user[-_]|service|admin|[a-z0-9._%+-]+@|[a-z0-9._-]+\\)",
-                str_item,
-                re.IGNORECASE,
-            ))
-            if has_account_field and (looks_like_account or not re.search(r"\bComputer\b", raw_kql, re.IGNORECASE)):
-                effective_field = "AccountName"
-
-        pair = _normalize_entity_pair(effective_field, str_item)
-        if pair:
-            _add_single_pair(pair[0], pair[1])
-
-    # Build ordered list of exclusion clauses
-    clauses: List[str] = []
-    for field, values in grouped_single_exclusions.items():
-        formatted_vals = ", ".join(f"'{v}'" for v in values)
-        clauses.append(f"| where {field} !in ({formatted_vals})")
-    for cc in compound_clauses:
-        if cc not in clauses:
-            clauses.append(cc)
-
-    if not clauses:
-        return raw_kql
-
-    # Locate first instance of an aggregate function (| summarize or | count)
-    match = re.search(r"(?i)(\|\s*(?:summarize|count)\b)", raw_kql)
-    if match:
-        idx = match.start()
-        line_start = raw_kql.rfind("\n", 0, idx)
-        if line_start != -1:
-            indent = raw_kql[line_start + 1 : idx]
-            if indent.strip() == "":
-                indented_block = "\n".join(f"{indent}{c}" for c in clauses)
-                return f"{raw_kql[:line_start + 1]}{indented_block}\n{raw_kql[line_start + 1:]}"
-            else:
-                block = "\n".join(clauses)
-                return f"{raw_kql[:idx]}{block}\n{raw_kql[idx:]}"
-        else:
-            if raw_kql[:idx].strip():
-                joined_clauses = " ".join(clauses)
-                return f"{raw_kql[:idx]}{joined_clauses} {raw_kql[idx:]}"
-            else:
-                block = "\n".join(clauses)
-                return f"{block}\n{raw_kql}"
-    else:
-        if "\n" in raw_kql:
-            block = "\n".join(clauses)
-            return f"{raw_kql.rstrip()}\n{block}"
-        else:
-            joined_clauses = " ".join(clauses)
-            return f"{raw_kql.rstrip()} {joined_clauses}"
+    compiler = KQLQueryCompiler(raw_kql, default_target_field=target_field)
+    return compiler.render(entities)
