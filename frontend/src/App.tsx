@@ -1,145 +1,104 @@
 import React, { useState } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import {
+  ArrowUpRight,
+  Bot,
+  FileCode2,
+  History,
+  LogOut,
+  Settings2,
+  SlidersHorizontal,
+  Sparkles,
+  TerminalSquare,
+} from 'lucide-react';
 import { LLMConfig } from './api/client';
-import { HeaderHealthBar, TabType } from './components/HeaderHealthBar';
 import { DirectTranslateView } from './components/DirectTranslateView';
 import { IntegrationSettings } from './components/IntegrationSettings';
 import { StandaloneTuningView } from './components/StandaloneTuningView';
 import { ModelSelector } from './components/ModelSelector';
 import { AuditLogModal } from './components/AuditLogModal';
 import { LoginGate } from './components/LoginGate';
-import { ArrowLeft, ShieldCheck, Activity } from 'lucide-react';
 
-const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: {
-      refetchOnWindowFocus: false,
-    },
-  },
-});
+const queryClient = new QueryClient({ defaultOptions: { queries: { refetchOnWindowFocus: false } } });
+export type AppSection = 'translate' | 'tuning' | 'settings' | 'history';
+
+const sections: Array<{ id: AppSection; label: string; icon: React.ElementType }> = [
+  { id: 'translate', label: 'Studio', icon: FileCode2 },
+  { id: 'tuning', label: 'Telemetry', icon: SlidersHorizontal },
+  { id: 'settings', label: 'Connections', icon: Settings2 },
+  { id: 'history', label: 'Archive', icon: History },
+];
 
 export const AppContent: React.FC = () => {
-  const [token, setToken] = useState<string | null>(
-    sessionStorage.getItem('auth_token') || localStorage.getItem('auth_token')
-  );
-
+  const [token, setToken] = useState<string | null>(sessionStorage.getItem('auth_token') || localStorage.getItem('auth_token'));
+  const [section, setSection] = useState<AppSection>('translate');
+  const [modelOpen, setModelOpen] = useState(false);
+  const [auditOpen, setAuditOpen] = useState(false);
   const [llmConfig, setLlmConfig] = useState<LLMConfig>({
     provider: 'lm_studio',
     model_name: 'qwen2.5-coder-7b-instruct',
     custom_base_url: 'http://localhost:1234/v1',
   });
 
-  const [activeTab, setActiveTab] = useState<TabType>('translate');
-  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [isAuditLogOpen, setIsAuditLogOpen] = useState(false);
+  React.useEffect(() => {
+    const handleAuthExpired = () => setToken(null);
+    window.addEventListener('auth:expired', handleAuthExpired);
+    return () => window.removeEventListener('auth:expired', handleAuthExpired);
+  }, []);
 
-  const handleLogout = () => {
+  if (!token) return <LoginGate onLoginSuccess={setToken} />;
+
+  const logout = () => {
     sessionStorage.removeItem('auth_token');
     localStorage.removeItem('auth_token');
     setToken(null);
   };
-
-  if (!token) {
-    return <LoginGate onLoginSuccess={setToken} />;
-  }
+  const selectSection = (next: AppSection) => setSection(next);
 
   return (
-    <div className="min-h-screen bg-[#080a0d] text-slate-200 flex flex-col font-sans antialiased selection:bg-cyan-500/20 selection:text-cyan-200">
-      {/* Precision Header & Telemetry Bar */}
-      <HeaderHealthBar
-        llmConfig={llmConfig}
-        activeTab={activeTab}
-        onSelectTab={setActiveTab}
-        onOpenSettings={() => setIsSettingsOpen(true)}
-        onOpenAuditLog={() => setIsAuditLogOpen(true)}
-        onLogout={handleLogout}
-      />
+    <div className="studio-app">
+      <header className="studio-topbar">
+        <button className="studio-brand" onClick={() => selectSection('translate')}>
+          <span className="brand-mark"><Sparkles size={16} /></span>
+          <span><strong>arc<span>/</span>shift</strong><small>migration studio</small></span>
+        </button>
+        <nav className="studio-nav" aria-label="Primary navigation">
+          {sections.map(({ id, label, icon: Icon }) => (
+            <button key={id} aria-label={id === 'translate' ? 'Translate' : id === 'tuning' ? 'Live Tuning' : id === 'settings' ? 'Settings' : 'Audit'} className={section === id ? 'studio-nav-item active' : 'studio-nav-item'} onClick={() => selectSection(id)}>
+              <Icon size={14} /> {label}
+            </button>
+          ))}
+        </nav>
+        <div className="studio-actions">
+          <button className="model-pill" onClick={() => setModelOpen(true)} aria-label="Model route">
+            <span className="pulse-dot" /><Bot size={14} /> <span className="model-pill-name">{llmConfig.model_name}</span>
+          </button>
+          <button className="round-action" title="Logout" aria-label="Logout" onClick={logout}><LogOut size={15} /></button>
+        </div>
+      </header>
 
-      {/* Main Workspace */}
-      <main className="flex-1 w-full max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 py-5 md:py-6">
-        {activeTab === 'translate' && (
-          <DirectTranslateView llmConfig={llmConfig} />
-        )}
+      <div className="studio-subbar">
+        <div className="studio-breadcrumb"><span>Workspace</span><ArrowUpRight size={13} /><strong>{sections.find((item) => item.id === section)?.label}</strong></div>
+        <div className="studio-shortcuts"><span><kbd>⌘</kbd>K</span> command menu <span className="shortcut-separator" /><span className="live-indicator">●</span> API ready</div>
+      </div>
 
-        {activeTab === 'tuning' && (
-          <div className="space-y-6 animate-fadeIn">
-            {/* Navigation / Return Breadcrumb */}
-            <div className="flex items-center justify-between">
-              <button
-                onClick={() => setActiveTab('translate')}
-                className="flex items-center gap-2 text-xs font-medium text-zinc-400 hover:text-cyan-300 transition-colors cursor-pointer group"
-              >
-                <ArrowLeft className="w-3.5 h-3.5 group-hover:-translate-x-0.5 transition-transform" />
-                <span>Return to Detection Workspace</span>
-              </button>
-              <div className="flex items-center gap-2 text-xs text-zinc-500">
-                <Activity className="w-3.5 h-3.5 text-cyan-400" />
-                <span>Telemetry Diagnostics</span>
-              </div>
-            </div>
-
-            <StandaloneTuningView />
-          </div>
-        )}
-
-        {activeTab === 'settings' && (
-          <div className="space-y-6 animate-fadeIn">
-            {/* Navigation / Return Breadcrumb */}
-            <div className="flex items-center justify-between">
-              <button
-                onClick={() => setActiveTab('translate')}
-                className="flex items-center gap-2 text-xs font-medium text-zinc-400 hover:text-cyan-300 transition-colors cursor-pointer group"
-              >
-                <ArrowLeft className="w-3.5 h-3.5 group-hover:-translate-x-0.5 transition-transform" />
-                <span>Return to Detection Workspace</span>
-              </button>
-              <div className="flex items-center gap-2 text-xs text-zinc-500">
-                <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
-                <span>Integration Vault</span>
-              </div>
-            </div>
-
-            {/* Centered Settings Card */}
-            <div className="flex justify-center">
-              <IntegrationSettings onSaved={() => setActiveTab('translate')} />
-            </div>
-          </div>
-        )}
+      <main className="studio-main">
+        {section === 'translate' && <DirectTranslateView llmConfig={llmConfig} />}
+        {section === 'tuning' && <div className="studio-page"><PageHeading eyebrow="Telemetry lab" title="Tune the signal, not the rule" description="Explore live Sentinel telemetry and find a threshold your analysts can trust." icon={<TerminalSquare size={18} />} /><StandaloneTuningView llmConfig={llmConfig} /></div>}
+        {section === 'settings' && <div className="studio-page"><PageHeading eyebrow="Connections" title="Your tools, in one place" description="Keep service credentials and model routing separate from the migration canvas." icon={<Settings2 size={18} />} /><div className="studio-settings-grid"><div className="studio-sheet"><IntegrationSettings onSaved={() => setSection('translate')} /></div><div className="studio-note"><div className="eyebrow">Active route</div><h2>{llmConfig.model_name}</h2><p>{llmConfig.provider} · local route</p><button className="studio-button secondary" onClick={() => setModelOpen(true)}><Bot size={14} /> Change model</button></div></div></div>}
+        {section === 'history' && <div className="studio-page"><PageHeading eyebrow="Archive" title="A trail of every decision" description="Open the audit log when you need to explain what changed, why it changed, and who reviewed it." icon={<History size={18} />} /><div className="archive-empty"><History size={25} /><h2>No context lost</h2><p>Migration history is protected behind the audit viewer, keeping the studio calm until you need it.</p><button className="studio-button primary" onClick={() => setAuditOpen(true)}>Open archive <ArrowUpRight size={14} /></button></div></div>}
       </main>
 
-      {/* Minimalist Footnote */}
-      <footer className="border-t border-[#202832] bg-[#080a0d] py-4 px-4 text-center text-[11px] text-zinc-500 tracking-wide">
-        <div className="flex flex-wrap items-center justify-center gap-2">
-          <span>ArcSight Detection Migration</span>
-          <span className="text-zinc-700">•</span>
-          <span>Deterministic Parsing Engine</span>
-          <span className="text-zinc-700">•</span>
-          <span>Dual Model Architecture</span>
-          <span className="text-zinc-700">•</span>
-          <span>Strict Human MDE Boundary</span>
-        </div>
-      </footer>
-
-      {/* Modals */}
-      <ModelSelector
-        isOpen={isSettingsOpen}
-        onClose={() => setIsSettingsOpen(false)}
-        config={llmConfig}
-        onChange={setLlmConfig}
-      />
-
-      <AuditLogModal
-        isOpen={isAuditLogOpen}
-        onClose={() => setIsAuditLogOpen(false)}
-      />
+      <ModelSelector isOpen={modelOpen} onClose={() => setModelOpen(false)} config={llmConfig} onChange={setLlmConfig} />
+      <AuditLogModal isOpen={auditOpen} onClose={() => setAuditOpen(false)} />
     </div>
   );
 };
 
+const PageHeading: React.FC<{ eyebrow: string; title: string; description: string; icon: React.ReactNode }> = ({ eyebrow, title, description, icon }) => (
+  <div className="studio-heading"><span className="heading-icon">{icon}</span><div><div className="eyebrow">{eyebrow}</div><h1>{title}</h1><p>{description}</p></div></div>
+);
+
 export default function App() {
-  return (
-    <QueryClientProvider client={queryClient}>
-      <AppContent />
-    </QueryClientProvider>
-  );
+  return <QueryClientProvider client={queryClient}><AppContent /></QueryClientProvider>;
 }

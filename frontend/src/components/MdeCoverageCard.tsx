@@ -16,7 +16,7 @@ const VERDICT_OPTIONS = [
 
 export const MdeCoverageCard: React.FC<MdeCoverageCardProps> = ({ value, onChange }) => {
   return (
-    <div className="rounded-2xl border border-indigo-500/30 bg-indigo-950/[0.08] backdrop-blur-md p-6 sm:p-7 space-y-6 relative overflow-hidden">
+    <div className="mde-coverage-card rounded-2xl border border-indigo-500/30 bg-indigo-950/[0.08] backdrop-blur-md p-6 sm:p-7 space-y-6 relative overflow-hidden">
       {/* Safety Boundary Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-indigo-500/20 pb-4">
         <div className="flex items-start sm:items-center gap-3">

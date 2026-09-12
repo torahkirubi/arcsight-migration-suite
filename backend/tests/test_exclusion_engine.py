@@ -249,6 +249,36 @@ class TestExclusionEngine(unittest.TestCase):
         self.assertNotIn("{'AccountName'", tuned)
         self.assertNotIn('{"Computer"', tuned)
 
+    def test_apply_exclusions_parses_labeled_entities_by_column(self):
+        """Field labels from an LLM must not become part of KQL values."""
+        raw_kql = (
+            "SecurityEvents_CL\n"
+            "| where TimeGenerated > ago(7d)\n"
+            "| summarize AlertCount=count() by Computer, AccountName, ProcessName, CommandLine\n"
+            "| order by AlertCount desc"
+        )
+        entities = [
+            "AccountName: svc-scanner",
+            "AccountName: svc-backup",
+            "AccountName: local_daemon",
+            "Computer: DC-01.corp.local",
+            "Computer: SRV-01.corp.local",
+            "Computer: SRV-02.corp.local",
+            "Computer: SRV-03.corp.local",
+        ]
+        tuned = apply_exclusions(raw_kql, entities)
+
+        self.assertIn(
+            "| where AccountName !in ('svc-scanner', 'svc-backup', 'local_daemon')",
+            tuned,
+        )
+        self.assertIn(
+            "| where Computer !in ('DC-01.corp.local', 'SRV-01.corp.local', 'SRV-02.corp.local', 'SRV-03.corp.local')",
+            tuned,
+        )
+        self.assertNotIn("AccountName: ", tuned)
+        self.assertNotIn("Computer: ", tuned)
+
 
     def test_apply_exclusions_compound_entity_dictionaries(self):
         """Assert that compound entity dictionaries generate | where not (<cond1> and <cond2>) clauses."""
@@ -288,4 +318,3 @@ class TestExclusionEngine(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

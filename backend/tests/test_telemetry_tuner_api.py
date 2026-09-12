@@ -127,7 +127,11 @@ class TestTelemetryTunerAPI(unittest.TestCase):
 
         self.mock_diagnostics_payload = {
             "noise_source": "Scheduled Backup Script",
-            "affected_entities": ["DC-PROD-01.corp.internal", "svc-backup", "10.0.4.15"],
+            "affected_entities": [
+                {"field": "Computer", "value": "DC-PROD-01.corp.internal"},
+                {"field": "AccountName", "value": "svc-backup"},
+                {"field": "IpAddress", "value": "10.0.4.15"},
+            ],
             "mitigation_steps": [
                 "Exclude TargetAccount == 'svc-backup' during 02:00-04:00 UTC maintenance windows",
                 "Add filter: | where IpAddress != '10.0.4.15' for dedicated backup appliance",
@@ -143,14 +147,14 @@ class TestTelemetryTunerAPI(unittest.TestCase):
         # Case 1: Missing Authorization header
         resp_no_auth = self.client.post(
             "/api/telemetry/tune",
-            json={"raw_kql": self.sample_kql, "current_threshold": 5},
+            json={"raw_kql": self.sample_kql, "current_threshold": 5, "llm_config": {"provider": "gemini", "model_name": "test-model", "custom_base_url": "https://llm.test/v1", "api_key": "test-key"}},
         )
         self.assertEqual(resp_no_auth.status_code, 401)
 
         # Case 2: Invalid Bearer token
         resp_bad_auth = self.client.post(
             "/api/telemetry/tune",
-            json={"raw_kql": self.sample_kql, "current_threshold": 5},
+            json={"raw_kql": self.sample_kql, "current_threshold": 5, "llm_config": {"provider": "gemini", "model_name": "test-model", "custom_base_url": "https://llm.test/v1", "api_key": "test-key"}},
             headers={"Authorization": "Bearer invalid.malformed.token"},
         )
         self.assertEqual(resp_bad_auth.status_code, 401)
@@ -166,7 +170,7 @@ class TestTelemetryTunerAPI(unittest.TestCase):
 
             resp = self.client.post(
                 "/api/telemetry/tune",
-                json={"raw_kql": self.sample_kql, "current_threshold": 5},
+                json={"raw_kql": self.sample_kql, "current_threshold": 5, "llm_config": {"provider": "gemini", "model_name": "test-model", "custom_base_url": "https://llm.test/v1", "api_key": "test-key"}},
                 headers=self.auth_headers,
             )
 
@@ -210,7 +214,7 @@ class TestTelemetryTunerAPI(unittest.TestCase):
 
             resp = self.client.post(
                 "/api/telemetry/tune",
-                json={"raw_kql": self.sample_kql, "current_threshold": 5},
+                json={"raw_kql": self.sample_kql, "current_threshold": 5, "llm_config": {"provider": "gemini", "model_name": "test-model", "custom_base_url": "https://llm.test/v1", "api_key": "test-key"}},
                 headers=self.auth_headers,
             )
 
@@ -224,7 +228,11 @@ class TestTelemetryTunerAPI(unittest.TestCase):
             self.assertEqual(diagnostics.get("noise_source"), "Scheduled Backup Script")
             self.assertEqual(
                 diagnostics.get("affected_entities"),
-                ["DC-PROD-01.corp.internal", "svc-backup", "10.0.4.15"],
+                [
+                    {"field": "Computer", "value": "DC-PROD-01.corp.internal"},
+                    {"field": "AccountName", "value": "svc-backup"},
+                    {"field": "IpAddress", "value": "10.0.4.15"},
+                ],
             )
             self.assertIn("mitigation_steps", diagnostics)
             self.assertIsInstance(diagnostics["mitigation_steps"], list)
@@ -316,7 +324,7 @@ class TestTelemetryTunerAPI(unittest.TestCase):
         fenced_json = """```json
 {
   "noise_source": "Scheduled Backup Script",
-  "affected_entities": ["SRV-BACKUP-01"],
+  "affected_entities": [{"field": "Computer", "value": "SRV-BACKUP-01"}],
   "mitigation_steps": ["| where Computer != 'SRV-BACKUP-01'"]
 }
 ```"""
@@ -328,7 +336,7 @@ class TestTelemetryTunerAPI(unittest.TestCase):
 
         self.assertIsNotNone(res)
         self.assertEqual(res["noise_source"], "Scheduled Backup Script")
-        self.assertEqual(res["affected_entities"], ["SRV-BACKUP-01"])
+        self.assertEqual(res["affected_entities"], [{"field": "Computer", "value": "SRV-BACKUP-01"}])
         self.assertEqual(res["mitigation_steps"], ["| where Computer != 'SRV-BACKUP-01'"])
 
     def test_diagnose_telemetry_noise_aliased_keys_recovery(self):
@@ -338,7 +346,10 @@ class TestTelemetryTunerAPI(unittest.TestCase):
 
         aliased_json = json.dumps({
             "root_cause": "Nessus Vulnerability Scan",
-            "noise_entities": ["192.168.1.100", "192.168.1.101"],
+            "noise_entities": [
+                {"field": "IpAddress", "value": "192.168.1.100"},
+                {"field": "IpAddress", "value": "192.168.1.101"},
+            ],
             "mitigated_kql": "| where IpAddress !in ('192.168.1.100', '192.168.1.101')"
         })
         mock_llm = MagicMock()
@@ -349,7 +360,10 @@ class TestTelemetryTunerAPI(unittest.TestCase):
 
         self.assertIsNotNone(res)
         self.assertEqual(res["noise_source"], "Nessus Vulnerability Scan")
-        self.assertEqual(res["affected_entities"], ["192.168.1.100", "192.168.1.101"])
+        self.assertEqual(res["affected_entities"], [
+            {"field": "IpAddress", "value": "192.168.1.100"},
+            {"field": "IpAddress", "value": "192.168.1.101"},
+        ])
         self.assertEqual(res["mitigation_steps"], ["| where IpAddress !in ('192.168.1.100', '192.168.1.101')"])
 
     def test_noise_diagnostics_system_prompt_strict_schema_field_constraint(self):
@@ -359,6 +373,33 @@ class TestTelemetryTunerAPI(unittest.TestCase):
         self.assertIn("You must ONLY use real column names present in the input query and sample records", NOISE_DIAGNOSTICS_SYSTEM_PROMPT)
         self.assertIn("For hostnames or machines, ALWAYS use: Computer", NOISE_DIAGNOSTICS_SYSTEM_PROMPT)
         self.assertIn("For usernames, ALWAYS use: AccountName", NOISE_DIAGNOSTICS_SYSTEM_PROMPT)
+
+    def test_diagnose_telemetry_noise_normalizes_labeled_entity_strings(self):
+        """Labeled string entities are normalized before exclusion generation."""
+        import asyncio
+        from backend.app import diagnose_telemetry_noise
+
+        mock_llm = MagicMock()
+        mock_llm.complete = AsyncMock(return_value=json.dumps({
+            "noise_source": "Scanner",
+            "affected_entities": [
+                "AccountName: svc-scanner",
+                "Computer: DC-01.corp.local",
+            ],
+            "mitigation_steps": ["Exclude scanner noise"],
+        }))
+
+        result = asyncio.run(
+            diagnose_telemetry_noise(
+                "SecurityEvents_CL | summarize count() by Computer, AccountName",
+                [{"Computer": "DC-01.corp.local", "AccountName": "svc-scanner"}],
+                mock_llm,
+            )
+        )
+        self.assertEqual(result["affected_entities"], [
+            {"field": "AccountName", "value": "svc-scanner"},
+            {"field": "Computer", "value": "DC-01.corp.local"},
+        ])
 
     def test_tune_telemetry_unpacks_real_records_and_applies_exclusions_without_generic_object(self):
         """Assert that tune_telemetry unpacks real records from Sentinel and applies exclusions without 'Object'."""
@@ -371,7 +412,7 @@ class TestTelemetryTunerAPI(unittest.TestCase):
         mock_llm = MagicMock()
         mock_llm.complete = AsyncMock(return_value=json.dumps({
             "noise_source": "Automated Backup Account",
-            "affected_entities": ["svc-backup"],
+            "affected_entities": [{"field": "AccountName", "value": "svc-backup"}],
             "mitigation_steps": ["Exclude svc-backup from alerts"]
         }))
 
@@ -380,7 +421,7 @@ class TestTelemetryTunerAPI(unittest.TestCase):
 
             resp = self.client.post(
                 "/api/telemetry/tune",
-                json={"raw_kql": "SecurityEvent | where EventID == 4625 | summarize count() by AccountName", "current_threshold": 5},
+                json={"raw_kql": "SecurityEvent | where EventID == 4625 | summarize count() by AccountName", "current_threshold": 5, "llm_config": {"provider": "gemini", "model_name": "test-model", "custom_base_url": "https://llm.test/v1", "api_key": "test-key"}},
                 headers=self.auth_headers,
             )
 
@@ -523,7 +564,7 @@ class TestTelemetryTunerAPI(unittest.TestCase):
 
             resp = self.client.post(
                 "/api/telemetry/tune",
-                json={"raw_kql": "SecurityEvent | where EventID == 4625 | summarize count() by AccountName, Computer", "current_threshold": 10},
+                json={"raw_kql": "SecurityEvent | where EventID == 4625 | summarize count() by AccountName, Computer", "current_threshold": 10, "llm_config": {"provider": "gemini", "model_name": "test-model", "custom_base_url": "https://llm.test/v1", "api_key": "test-key"}},
                 headers=self.auth_headers,
             )
 
@@ -592,7 +633,7 @@ class TestTelemetryTunerAPI(unittest.TestCase):
 
             resp = self.client.post(
                 "/api/telemetry/tune",
-                json={"raw_kql": raw_query, "current_threshold": 10},
+                json={"raw_kql": raw_query, "current_threshold": 10, "llm_config": {"provider": "gemini", "model_name": "test-model", "custom_base_url": "https://llm.test/v1", "api_key": "test-key"}},
                 headers=self.auth_headers,
             )
 

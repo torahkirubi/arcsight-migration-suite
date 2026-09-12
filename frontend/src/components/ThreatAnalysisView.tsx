@@ -73,7 +73,7 @@ export const ThreatAnalysisView: React.FC<ThreatAnalysisViewProps> = ({ analysis
     [];
 
   return (
-    <div className="rounded-2xl border border-white/[0.06] bg-[#07080b]/60 p-6 space-y-6">
+    <div className="threat-analysis-card rounded-2xl border border-white/[0.06] bg-[#07080b]/60 p-6 space-y-6">
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-white/[0.06] pb-4">
         <div className="flex items-center gap-2.5">

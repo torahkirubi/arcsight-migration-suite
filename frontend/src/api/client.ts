@@ -239,6 +239,7 @@ export async function apiFetch(path: string, init: RequestInit = {}): Promise<Re
   if (response.status === 401) {
     sessionStorage.removeItem('auth_token');
     localStorage.removeItem('auth_token');
+    window.dispatchEvent(new CustomEvent('auth:expired'));
   }
   return response;
 }
@@ -253,11 +254,7 @@ export async function fetchHealth(
   };
 
   const cleanKey = (apiKey || '').trim();
-  if (cleanKey) {
-    headers['Authorization'] = `Bearer ${cleanKey}`;
-  }
-
-  const res = await fetch(`${API_BASE}/health`, {
+  const res = await apiFetch('/health', {
     method: 'POST',
     headers,
     body: JSON.stringify({

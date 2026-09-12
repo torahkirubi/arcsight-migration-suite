@@ -161,7 +161,8 @@ from backend.threat_analysis_prompts import (
 )
 from backend.splunk_client import SplunkTestClient
 from backend.sentinel_client import SentinelClient
-from backend.telemetry_tuner import apply_exclusions, calculate_dynamic_threshold
+from backend.telemetry_tuner import apply_exclusions, calculate_dynamic_threshold, normalize_structured_entities
+from backend.schemas.exclusion_ir import RuleTuningAnalysis
 from backend.audit_store import audit_store
 from backend.git_exporter import generate_git_ready_text, save_git_ready_runbook
 from backend.auth_vault import (
@@ -1305,6 +1306,7 @@ class NoiseDiagnostics(BaseModel):
 class TuneRequest(BaseModel):
     raw_kql: str
     current_threshold: Optional[int] = 1
+    llm_config: Optional[LLMConfigPayload] = None
 
 
 class TuneResponse(BaseModel):
@@ -1327,7 +1329,12 @@ CRITICAL FIELD RULES:
    - For commands, ALWAYS use: CommandLine
    - For event IDs, ALWAYS use: EventID
 3. When constructing the auto-mitigated query, inject exclusions that specifically target noisy entities (such as AccountName !in ('svc-scanner', 'svc-backup') or specific CommandLine patterns) rather than filtering out all hostnames.
-4. Return valid JSON matching the schema: {"noise_source": "...", "affected_entities": [...], "mitigation_steps": "...", "mitigated_kql": "..."}
+4. Return ONLY valid JSON matching the RuleTuningAnalysis schema:
+   {"noise_summary": "string", "recommended_threshold": 1, "exclusions": [
+     {"type": "single_field", "field": "AccountName", "operator": "!in", "values": ["svc-scanner"]}
+   ]}
+   Use only columns present in the query's target table. Never return plain strings,
+   Python dict syntax, inferred fields, or a generated KQL query.
 """
 
 
@@ -1359,6 +1366,7 @@ async def diagnose_telemetry_noise(
                 system_prompt=NOISE_DIAGNOSTICS_SYSTEM_PROMPT,
                 temperature=0.1,
                 max_tokens=8192,
+                response_schema=RuleTuningAnalysis.model_json_schema(),
             )
         else:
             raw_response = llm_client.complete(
@@ -1366,6 +1374,7 @@ async def diagnose_telemetry_noise(
                 system_prompt=NOISE_DIAGNOSTICS_SYSTEM_PROMPT,
                 temperature=0.1,
                 max_tokens=8192,
+                response_schema=RuleTuningAnalysis.model_json_schema(),
             )
 
         if not raw_response or not isinstance(raw_response, str):
@@ -1396,16 +1405,12 @@ async def diagnose_telemetry_noise(
                 except Exception:
                     pass
 
-        # Fallback 2: Regex key-value extraction for partial/truncated JSON or alternate formatting
+        # Fallback 2: Extract only scalar metadata; entity values remain schema-strict.
         if not isinstance(parsed, dict):
             parsed = {}
             ns_match = re.search(r'"(?:noise_source|root_cause)"\s*:\s*"([^"]+)"', cleaned)
             if ns_match:
                 parsed["noise_source"] = ns_match.group(1)
-
-            ent_match = re.search(r'"(?:affected_entities|noise_entities)"\s*:\s*\[([^\]]*)\]', cleaned)
-            if ent_match:
-                parsed["affected_entities"] = re.findall(r'"([^"]+)"', ent_match.group(1))
 
             mit_match = re.search(r'"(?:mitigation_steps|mitigated_kql)"\s*:\s*(\[[^\]]*\]|"[^"]+")', cleaned)
             if mit_match:
@@ -1416,19 +1421,37 @@ async def diagnose_telemetry_noise(
                     parsed["mitigation_steps"] = [val.strip('"')]
 
         # Extract values with support for alternate aliases
-        noise_source = str(parsed.get("noise_source") or parsed.get("root_cause") or "").strip()
+        noise_source = str(
+            parsed.get("noise_source")
+            or parsed.get("root_cause")
+            or parsed.get("noise_summary")
+            or ""
+        ).strip()
         if not noise_source:
             noise_source = "Unknown Noise Source"
 
         raw_entities = parsed.get("affected_entities") or parsed.get("noise_entities") or []
+        if not raw_entities and isinstance(parsed.get("exclusions"), list):
+            raw_entities = []
+            for exclusion in parsed["exclusions"]:
+                if not isinstance(exclusion, dict):
+                    continue
+                if exclusion.get("type") == "single_field":
+                    raw_entities.extend(
+                        {"field": exclusion.get("field"), "value": value}
+                        for value in exclusion.get("values", [])
+                    )
+                elif exclusion.get("type") == "compound":
+                    raw_entities.append({
+                        str(condition.get("field")): condition.get("value")
+                        for condition in exclusion.get("conditions", [])
+                        if isinstance(condition, dict)
+                    })
         if not isinstance(raw_entities, list):
             raw_entities = [raw_entities]
-        affected_entities = []
-        for e in raw_entities:
-            if isinstance(e, dict):
-                affected_entities.append(e)
-            elif e is not None and str(e).strip():
-                affected_entities.append(str(e).strip())
+        affected_entities = normalize_structured_entities(raw_entities)
+        if raw_entities and len(affected_entities) != len(raw_entities):
+            logger.warning("Diagnostics response contained ambiguous or unsupported entity shapes; ignored them")
 
         mitigation_steps = parsed.get("mitigation_steps") or []
         if not mitigation_steps and "mitigated_kql" in parsed:
@@ -1588,32 +1611,24 @@ async def tune_telemetry(
     noise_diagnostics = None
     if sample_records and len(sample_records) > 0:
         try:
-            # Case-insensitive resolution from vault, fallback to env
-            gemini_key = None
-            for candidate_key in ("GEMINI_API_KEY", "gemini_api_key", "Gemini_API_Key", "gemini_key", "GEMINI_KEY"):
-                try:
-                    val = vault.get_secret(candidate_key)
-                    if val and val.strip():
-                        gemini_key = val.strip()
-                        break
-                except Exception as lookup_err:
-                    logger.debug(f"Vault secret lookup for '{candidate_key}' failed: {lookup_err}")
-
-            if not gemini_key:
-                gemini_key = (
-                    os.getenv("GEMINI_API_KEY")
-                    or os.getenv("gemini_api_key")
-                    or os.getenv("GEMINI_KEY")
-                    or os.getenv("gemini_key")
-                    or ""
-                ).strip()
-
-            if gemini_key:
-                logger.debug(f"Found Gemini API key with length: {len(gemini_key)}")
+            llm_config = getattr(payload, "llm_config", None)
+            if not llm_config:
+                logger.info("Diagnostics pipeline skipped: no client LLM configuration was supplied")
+                llm_client = None
             else:
-                logger.debug("No Gemini API key found in vault or environment")
-
-            llm_client = get_llm_client(provider="gemini", api_key=gemini_key)
+                config_value = (
+                    lambda name, default=None: (
+                        getattr(llm_config, name, None)
+                        if not isinstance(llm_config, dict)
+                        else llm_config.get(name, default)
+                    )
+                )
+                llm_client = get_llm_client(
+                    provider=config_value("provider", "lm_studio") or "lm_studio",
+                    custom_base_url=config_value("custom_base_url"),
+                    api_key=config_value("api_key"),
+                    model_name=config_value("model_name"),
+                )
             if llm_client:
                 noise_diagnostics = await diagnose_telemetry_noise(
                     raw_kql=kql_query,
@@ -1621,7 +1636,7 @@ async def tune_telemetry(
                     llm_client=llm_client,
                 )
             else:
-                logger.error("Diagnostics pipeline failed: get_llm_client returned None for provider 'gemini'")
+                logger.info("Diagnostics pipeline skipped: client LLM configuration was unavailable")
         except Exception as e:
             logger.error(f"Diagnostics pipeline failed: {e}", exc_info=True)
             noise_diagnostics = None
@@ -1638,16 +1653,7 @@ async def tune_telemetry(
             affected_entities = noise_diagnostics.get("affected_entities")
         if affected_entities:
             try:
-                target_field = "Computer"
-                has_account_field = bool(re.search(r"\bAccountName\b", kql_query, re.IGNORECASE))
-                looks_like_account = any(
-                    re.search(r"^(?:svc[-_]|adm[-_]|user[-_]|service|admin|[a-z0-9._%+-]+@|[a-z0-9._-]+\\)", str(e), re.IGNORECASE)
-                    for e in affected_entities
-                )
-                if has_account_field and (looks_like_account or not re.search(r"\bComputer\b", kql_query, re.IGNORECASE)):
-                    target_field = "AccountName"
-
-                tuned_kql = apply_exclusions(raw_kql=kql_query, entities=affected_entities, target_field=target_field)
+                tuned_kql = apply_exclusions(raw_kql=kql_query, entities=affected_entities)
             except Exception as e:
                 logger.error(f"Diagnostics pipeline failed: apply_exclusions error: {e}", exc_info=True)
                 tuned_kql = None

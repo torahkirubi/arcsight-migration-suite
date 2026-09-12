@@ -1,38 +1,37 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
-  LLMConfig,
-  TranslateDirectResponse,
-  ThreatAnalysis,
-  MdeCoverageInput,
-  SaveRunbookResponse,
-  translateDirect,
-  generateRunbook,
-  saveRunbook,
-} from '../api/client';
-import { MitreBadge } from './MitreBadge';
-import { MdeCoverageCard } from './MdeCoverageCard';
-import { ValidationReport } from './ValidationReport';
-import { ThreatAnalysisView } from './ThreatAnalysisView';
-import { TelemetryTunerCard } from './TelemetryTunerCard';
-import { GitExportViewer } from './GitExportViewer';
-import { SplunkTestModal } from './SplunkTestModal';
-import {
-  Sparkles,
-  Copy,
-  Check,
-  FileCode2,
-  Database,
-  ShieldCheck,
   AlertTriangle,
-  FileDown,
-  ChevronDown,
-  ChevronUp,
+  Check,
+  CheckCircle2,
+  ChevronRight,
+  Clipboard,
+  Code2,
+  Download,
+  FileCode2,
+  FileText,
+  Play,
+  RefreshCw,
+  ShieldCheck,
+  Sparkles,
   Terminal,
-  ArrowRight,
-  Sliders,
+  UserCheck,
+  XCircle,
 } from 'lucide-react';
+import {
+  generateRunbook,
+  LLMConfig,
+  MdeCoverageInput,
+  saveRunbook,
+  SaveRunbookResponse,
+  ThreatAnalysis,
+  translateDirect,
+  TranslateDirectResponse,
+} from '../api/client';
+import { MdeCoverageCard } from './MdeCoverageCard';
+import { SplunkTestModal } from './SplunkTestModal';
+import { ThreatAnalysisView } from './ThreatAnalysisView';
 
-const SAMPLE_ARCSIGHT_RULE = `Rule Name: ADFind Active Directory Reconnaissance Detected
+const SAMPLE_RULE = `Rule Name: ADFind Active Directory Reconnaissance Detected
 Priority: 7
 Matching 5 events in 10 Minutes
 groupByFields: deviceHostName, destinationUserName
@@ -45,593 +44,322 @@ SetEventField(name, "ADFind Active Directory Reconnaissance Detected")
 SetEventField(basePriority, 7)
 SetEventField(eventAnnotationStage, <Resource URI="/All Stages/MITRE Tactics/Discovery" />)`;
 
-interface DirectTranslateViewProps {
-  llmConfig: LLMConfig;
-}
+type WorkspaceTab = 'overview' | 'queries' | 'review' | 'export';
 
-export const DirectTranslateView: React.FC<DirectTranslateViewProps> = ({ llmConfig }) => {
+export const DirectTranslateView: React.FC<{ llmConfig: LLMConfig }> = ({ llmConfig }) => {
   const [rawText, setRawText] = useState('');
-  const [isTranslating, setIsTranslating] = useState(false);
-  const [translationResult, setTranslationResult] = useState<TranslateDirectResponse | null>(null);
-  const [translationError, setTranslationError] = useState<string | null>(null);
-
-  // Threat Analysis state
-  const [isGeneratingRunbook, setIsGeneratingRunbook] = useState(false);
-  const [threatAnalysis, setThreatAnalysis] = useState<ThreatAnalysis | null>(null);
-
-  // Human MDE Coverage state
+  const [result, setResult] = useState<TranslateDirectResponse | null>(null);
+  const [analysis, setAnalysis] = useState<ThreatAnalysis | null>(null);
   const [mdeCoverage, setMdeCoverage] = useState<MdeCoverageInput>({
     verdict: '',
     notes: '',
     reviewer_name: 'Detection Engineer',
   });
-
-  // Export Viewer state
-  const [isSaving, setIsSaving] = useState(false);
-  const [savedRunbook, setSavedRunbook] = useState<SaveRunbookResponse | null>(null);
-  const [isExportOpen, setIsExportOpen] = useState(false);
-
-  // Diagnostic accordion state
-  const [showDiagnostics, setShowDiagnostics] = useState(false);
-
-  // Live Splunk modal state
-  const [isSplunkModalOpen, setIsSplunkModalOpen] = useState(false);
-
-  // Deep Mode state
+  const [tab, setTab] = useState<WorkspaceTab>('overview');
   const [deepMode, setDeepMode] = useState(false);
-  const [deepLogs, setDeepLogs] = useState<string[]>([]);
+  const [logs, setLogs] = useState<string[]>([]);
+  const [busy, setBusy] = useState<'translate' | 'analysis' | 'export' | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState<SaveRunbookResponse | null>(null);
+  const [splunkOpen, setSplunkOpen] = useState(false);
+  const [copied, setCopied] = useState<'kql' | 'spl' | null>(null);
 
-  // Copy states
-  const [copiedKql, setCopiedKql] = useState(false);
-  const [copiedSpl, setCopiedSpl] = useState(false);
+  const canExport = Boolean(result && result.validation.passed && mdeCoverage.verdict.trim());
+  const status = useMemo(() => {
+    if (!result) return { label: 'Awaiting source', tone: 'neutral' };
+    if (!result.validation.passed) return { label: 'Review required', tone: 'danger' };
+    return { label: 'Validated', tone: 'good' };
+  }, [result]);
 
-  const handleTranslate = async () => {
+  const translate = async () => {
     if (!rawText.trim()) return;
-    setIsTranslating(true);
-    setTranslationError(null);
-    setThreatAnalysis(null);
-    setDeepLogs(deepMode ? ['Initializing autonomous Deep Mode session...'] : []);
+    setBusy('translate');
+    setError(null);
+    setAnalysis(null);
+    setSaved(null);
+    setLogs(deepMode ? ['Starting Deep Mode validation loop'] : []);
     try {
-      const res = await translateDirect(
-        rawText,
+      const next = await translateDirect(rawText, llmConfig, deepMode, (message) => setLogs((current) => [...current, message]));
+      setResult(next);
+      setTab('queries');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Translation failed');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const createAnalysis = async () => {
+    if (!result) return;
+    setBusy('analysis');
+    setError(null);
+    try {
+      const parsed = result.parsed_rule;
+      const response = await generateRunbook(
+        parsed.rule_name,
+        parsed.severity,
+        parsed.mitre_tactic,
+        parsed.raw_condition,
+        result.kql_query,
+        result.spl_query,
         llmConfig,
-        deepMode,
-        (statusText: string) => {
-          setDeepLogs((prev) => [...prev, statusText]);
-        }
       );
-      setTranslationResult(res);
-    } catch (err: any) {
-      setTranslationError(err.message || 'Direct translation failed');
+      setAnalysis(response.threat_analysis);
+      setTab('review');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Runbook analysis failed');
     } finally {
-      setIsTranslating(false);
+      setBusy(null);
     }
   };
 
-  const handleGenerateRunbook = async () => {
-    if (!translationResult) return;
-    setIsGeneratingRunbook(true);
-    try {
-      const p = translationResult.parsed_rule;
-      const res = await generateRunbook(
-        p.rule_name,
-        p.severity,
-        p.mitre_tactic,
-        p.raw_condition,
-        translationResult.kql_query,
-        translationResult.spl_query,
-        llmConfig
-      );
-      setThreatAnalysis(res.threat_analysis);
-    } catch (err: any) {
-      alert(`Threat analysis generation failed: ${err.message}`);
-    } finally {
-      setIsGeneratingRunbook(false);
-    }
-  };
-
-  const handleSaveAndExport = async () => {
-    if (!translationResult) return;
-    if (!mdeCoverage.verdict.trim()) {
-      alert('Safety Requirement: Please select an MDE Coverage Verdict before exporting.');
+  const exportRunbook = async () => {
+    if (!result || !mdeCoverage.verdict.trim()) {
+      setError('Complete the human MDE coverage assessment before exporting.');
+      setTab('review');
       return;
     }
-
-    setIsSaving(true);
+    setBusy('export');
+    setError(null);
     try {
-      const p = translationResult.parsed_rule;
-      const res = await saveRunbook({
-        rule_name: p.rule_name,
-        severity: p.severity,
-        priority: p.priority,
-        mitre_tactic: p.mitre_tactic,
-        mitre_source: p.mitre_source,
-        mitre_uri: p.mitre_uri,
-        frequency_str: p.frequency.raw_frequency,
-        group_by: p.group_by_fields,
-        kql_query: translationResult.kql_query,
-        kql_validation: translationResult.validation.kql,
-        spl_query: translationResult.spl_query,
-        spl_validation: translationResult.validation.spl,
-        threat_analysis: threatAnalysis || {
-          threat_summary: 'Pending threat analysis generation',
+      const parsed = result.parsed_rule;
+      const response = await saveRunbook({
+        rule_name: parsed.rule_name,
+        severity: parsed.severity,
+        priority: parsed.priority,
+        mitre_tactic: parsed.mitre_tactic,
+        mitre_source: parsed.mitre_source,
+        mitre_uri: parsed.mitre_uri,
+        frequency_str: parsed.frequency.raw_frequency,
+        group_by: parsed.group_by_fields,
+        kql_query: result.kql_query,
+        kql_validation: result.validation.kql,
+        spl_query: result.spl_query,
+        spl_validation: result.validation.spl,
+        threat_analysis: analysis || {
+          threat_summary: 'Threat analysis pending',
           mitre_techniques: [],
-          detection_review: {
-            false_positive_sources: [],
-            evasion_blindspots: [],
-            time_window_evaluation: '',
-            missing_triage_fields: [],
-          },
-          analyst_triage_guide: {
-            triage_priority: p.severity,
-            initial_questions: [],
-            containment_steps: [],
-            escalation_criteria: [],
-          },
-          rule_naming_suggestions: [p.rule_name],
+          detection_review: {},
+          analyst_triage_guide: {},
         },
         mde_coverage: mdeCoverage,
-        llm_model: llmConfig.model_name || 'qwen2.5-coder',
+        llm_model: llmConfig.model_name,
       });
-      setSavedRunbook(res);
-      setIsExportOpen(true);
-    } catch (err: any) {
-      alert(`Save runbook failed: ${err.message}`);
+      setSaved(response);
+      setTab('export');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Runbook export failed');
     } finally {
-      setIsSaving(false);
+      setBusy(null);
     }
   };
 
-  const copyToClipboard = (text: string, type: 'kql' | 'spl') => {
-    navigator.clipboard.writeText(text);
-    if (type === 'kql') {
-      setCopiedKql(true);
-      setTimeout(() => setCopiedKql(false), 2000);
-    } else {
-      setCopiedSpl(true);
-      setTimeout(() => setCopiedSpl(false), 2000);
-    }
+  const copy = async (value: string, type: 'kql' | 'spl') => {
+    await navigator.clipboard?.writeText(value);
+    setCopied(type);
+    window.setTimeout(() => setCopied(null), 1600);
   };
 
   return (
-    <div className="space-y-6 sm:space-y-8 w-full pb-16">
-      {/* Top Raw Rule Ingestion Card */}
-      <div className="workbench-panel p-4 sm:p-5 space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-white/[0.06] pb-5">
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-white/[0.04] border border-white/[0.08] flex items-center justify-center text-cyan-400">
-              <FileCode2 className="w-4 h-4 stroke-[1.75]" />
-            </div>
-            <div>
-              <h2 className="text-base font-semibold text-white tracking-tight">
-                Source ArcSight ESM Rule
-              </h2>
-              <p className="text-xs text-zinc-400 mt-0.5">
-                Deterministic regex boundary parsing. Zero LLM involvement in condition extraction.
-              </p>
-            </div>
-          </div>
-          <button
-            onClick={() => setRawText(SAMPLE_ARCSIGHT_RULE)}
-            className="flex items-center gap-1.5 text-xs font-medium text-cyan-400/90 hover:text-cyan-300 self-start sm:self-auto transition-colors"
-          >
-            <span>Load Sample ADfind Rule</span>
-            <ArrowRight className="w-3.5 h-3.5" />
-          </button>
+    <div className="studio-canvas">
+      <div className="studio-canvas-intro">
+        <div>
+          <div className="eyebrow">01 / compose</div>
+          <h1>Turn a legacy rule into a deployable signal.</h1>
+          <p>
+            Start with the rule. The studio will parse its intent, translate both target languages, and hold the final decision for human review.
+          </p>
         </div>
-
-        <textarea
-          rows={7}
-          value={rawText}
-          onChange={(e) => setRawText(e.target.value)}
-          placeholder="Paste raw ArcSight ESM XML, HTML, or rule documentation text here..."
-          className="w-full bg-[#080a0d] border border-[#29323d] focus:border-cyan-400/50 rounded-sm p-4 font-mono text-xs sm:text-sm text-zinc-200 focus:outline-none transition-all resize-y leading-relaxed min-h-[160px]"
-        />
-
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pt-1">
-          <div className="flex items-center gap-2 text-base text-zinc-400">
-            <Sliders className="w-3.5 h-3.5 text-zinc-500" />
-            <span>Target Engine:</span>
-            <span className="text-zinc-200 font-medium">{llmConfig.provider}</span>
-            <span className="text-zinc-500">({llmConfig.model_name || 'qwen2.5-coder'})</span>
-          </div>
-
-          <div className="flex items-center gap-3">
-            {/* Deep Mode Toggle Switch (DESIGN.md compliant) */}
-            <button
-              type="button"
-              role="switch"
-              aria-checked={deepMode}
-              onClick={() => setDeepMode(!deepMode)}
-              className="flex items-center gap-2.5 px-3 py-2 rounded-sm border border-slate-800 bg-slate-900 hover:bg-slate-800/80 transition-colors text-xs font-medium cursor-pointer"
-              title="Autonomous testing and self-correction against local Splunk container"
-            >
-              <span className="text-slate-300 select-none">Deep Mode</span>
-              <div
-                className={`w-8 h-4 rounded-sm border border-slate-800 p-0.5 flex items-center transition-colors ${
-                  deepMode ? 'bg-cyan-500' : 'bg-slate-900'
-                }`}
-              >
-                <div
-                  className={`w-3 h-3 rounded-none transition-transform duration-150 ${
-                    deepMode ? 'translate-x-3.5 bg-slate-950' : 'translate-x-0 bg-slate-500'
-                  }`}
-                />
-              </div>
-            </button>
-
-            <button
-              onClick={handleTranslate}
-              disabled={isTranslating || !rawText.trim()}
-              className="flex items-center justify-center gap-2.5 px-6 py-2.5 rounded-sm bg-cyan-500 hover:bg-cyan-400 disabled:opacity-40 text-slate-950 font-semibold text-xs sm:text-sm transition-all duration-150 cursor-pointer"
-            >
-              <Sparkles className={`w-4 h-4 stroke-[2] ${isTranslating ? 'animate-spin' : ''}`} />
-              <span>
-                {isTranslating
-                  ? deepMode
-                    ? 'Autonomous Deep Validation...'
-                    : 'Synthesizing Queries...'
-                  : deepMode
-                  ? 'Deep Translate (Splunk Loop)'
-                  : 'Translate to KQL & SPL'}
-              </span>
-            </button>
-          </div>
-        </div>
-
-        {/* Streamed Status Terminal Block (DESIGN.md compliant) */}
-        {deepMode && (isTranslating || deepLogs.length > 0) && (
-          <div className="font-mono text-sm text-slate-400 bg-slate-950 p-3 border border-slate-800 rounded-sm space-y-2">
-            <div className="flex items-center justify-between border-b border-slate-800/80 pb-2 text-xs text-slate-500">
-              <div className="flex items-center gap-2">
-                <Terminal className="w-3.5 h-3.5 text-cyan-400" />
-                <span className="text-slate-300 font-semibold tracking-wide">Deep Mode Autonomous Splunk Loop</span>
-              </div>
-              {isTranslating && (
-                <div className="flex items-center gap-1.5 text-cyan-400 font-mono text-[11px]">
-                  <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
-                  <span>ACTIVE</span>
-                </div>
-              )}
-            </div>
-            <div className="space-y-1 max-h-48 overflow-y-auto pt-1 font-mono text-xs sm:text-sm">
-              {deepLogs.map((log, idx) => (
-                <div key={idx} className="flex items-start gap-2">
-                  <span className="text-cyan-500/80 select-none">&gt;</span>
-                  <span className={idx === deepLogs.length - 1 && isTranslating ? 'text-cyan-200' : 'text-slate-400'}>
-                    {log}
-                  </span>
-                </div>
-              ))}
-              {isTranslating && (
-                <div className="flex items-center gap-2 text-cyan-400/60 pt-0.5 animate-pulse">
-                  <span className="select-none">&gt;</span>
-                  <span className="inline-block w-2 h-3.5 bg-cyan-400/80 align-middle" />
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* Translation Error Banner */}
-        {translationError && (
-          <div className="p-4 rounded-xl border border-rose-500/30 bg-rose-500/[0.05] text-rose-300 text-base flex items-start gap-3">
-            <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-rose-400 stroke-[1.75]" />
-            <div className="space-y-1">
-              <div className="font-semibold text-rose-200">Translation Engine Exception</div>
-              <p className="text-zinc-400 text-base leading-relaxed">{translationError}</p>
-              <div className="text-zinc-400 text-base mt-1">
-                Please verify your LLM service is active at{' '}
-                <code className="font-mono bg-black/40 px-1.5 py-0.5 rounded border border-white/[0.08] text-zinc-300 text-sm leading-relaxed">
-                  {llmConfig.custom_base_url || 'http://localhost:1234/v1'}
-                </code>
-              </div>
-            </div>
-          </div>
-        )}
+        <div className="canvas-status"><span className={`canvas-status-dot ${status.tone}`} /> {status.label}</div>
       </div>
 
-      {/* Main Workspace (Rendered once translated) */}
-      {translationResult && (
-        <div className="space-y-5 sm:space-y-6">
-          <nav
-            aria-label="Migration workflow"
-            className="workbench-panel flex flex-wrap items-center gap-2 px-4 py-3 text-[11px] font-semibold uppercase tracking-[0.08em]"
-          >
-            {['Ingest', 'Parse', 'Translate', 'Validate', 'Review', 'Export'].map((stage, index) => (
-              <React.Fragment key={stage}>
-                <span
-                  className={`px-2 py-1 ${
-                    index <= 3 ? 'bg-cyan-500/15 text-cyan-300' : 'text-zinc-500'
-                  }`}
-                >
-                  {index + 1} {stage}
-                </span>
-                {index < 5 && <ArrowRight className="h-3 w-3 text-zinc-600" aria-hidden="true" />}
-              </React.Fragment>
+      <section className="source-canvas">
+        <div className="source-canvas-top">
+          <div><span className="source-index">A</span><span><strong>Source rule</strong><small>ArcSight export / correlation definition</small></span></div>
+          <button className="canvas-link" onClick={() => setRawText(SAMPLE_RULE)}><Sparkles size={14} /> Use a sample rule</button>
+        </div>
+        <textarea
+          aria-label="Source ArcSight rule"
+          value={rawText}
+          onChange={(event) => setRawText(event.target.value)}
+          placeholder="Paste raw ArcSight XML, HTML, or rule documentation here..."
+          className="studio-query-input"
+        />
+        <div className="source-canvas-footer">
+          <label className="deep-toggle">
+            <input type="checkbox" checked={deepMode} onChange={(event) => setDeepMode(event.target.checked)} />
+            <span><strong>Deep validation</strong><small>bounded Splunk feedback loop</small></span>
+          </label>
+          <button className="studio-button primary translate-action" onClick={translate} disabled={!rawText.trim() || busy === 'translate'}>
+            {busy === 'translate' ? <RefreshCw className="animate-spin" size={15} /> : <Play size={15} />}
+            {busy === 'translate' ? 'Working…' : 'Run translation'}
+          </button>
+        </div>
+      </section>
+
+      {error && <div className="alert-danger"><AlertTriangle size={16} /><span>{error}</span></div>}
+
+      {busy === 'translate' && deepMode && (
+        <section className="workbench-panel p-4">
+          <div className="flex items-center gap-2 text-xs font-semibold text-cyan-300"><Terminal size={15} /> Deep Mode activity</div>
+          <div className="mt-3 max-h-32 space-y-1 overflow-auto font-mono text-[11px] text-slate-500">
+            {logs.map((log, index) => <div key={`${log}-${index}`}><span className="mr-2 text-cyan-500">›</span>{log}</div>)}
+          </div>
+        </section>
+      )}
+
+      {result && (
+        <>
+          <nav className="workbench-tabs" aria-label="Migration result sections">
+            {([
+              ['overview', 'Overview', ShieldCheck],
+              ['queries', 'Queries', Code2],
+              ['review', 'Review', UserCheck],
+              ['export', 'Export', Download],
+            ] as const).map(([id, label, Icon]) => (
+              <button key={id} className={tab === id ? 'workbench-tab workbench-tab-active' : 'workbench-tab'} onClick={() => setTab(id)}>
+                <Icon size={15} /> {label}
+              </button>
             ))}
           </nav>
 
-          {/* Deterministic Extraction Specification Strip */}
-          <div className="workbench-panel p-4 sm:p-5 space-y-5">
-            <div className="flex items-center justify-between border-b border-white/[0.06] pb-4">
-              <div className="flex items-center gap-2.5">
-                <div className="w-7 h-7 rounded-lg bg-emerald-500/[0.08] border border-emerald-500/20 flex items-center justify-center text-emerald-400">
-                  <ShieldCheck className="w-4 h-4 stroke-[1.75]" />
-                </div>
-                <h3 className="text-sm font-semibold text-white tracking-tight">
-                  Deterministic Extraction Specification
-                </h3>
-              </div>
-              <span className="px-2.5 py-0.5 text-[10px] font-medium tracking-wider uppercase rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                Zero LLM Involvement
-              </span>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
-              {/* Rule Name */}
-              <div className="md:col-span-2 space-y-1">
-                <span className="text-[11px] font-medium uppercase tracking-wider text-zinc-400">
-                  Rule Name
-                </span>
-                <div className="text-base font-semibold text-white">
-                  {translationResult.parsed_rule.rule_name}
-                </div>
-              </div>
-
-              {/* Severity & Priority */}
-              <div className="space-y-1">
-                <span className="text-[11px] font-medium uppercase tracking-wider text-zinc-400">
-                  Severity / Priority
-                </span>
-                <div className="flex items-center gap-2.5">
-                  <span
-                    className={`px-2.5 py-0.5 rounded-full text-xs font-medium border ${
-                      translationResult.parsed_rule.severity === 'Critical'
-                        ? 'bg-rose-500/10 text-rose-300 border-rose-500/30'
-                        : translationResult.parsed_rule.severity === 'High'
-                        ? 'bg-amber-500/10 text-amber-300 border-amber-500/30'
-                        : 'bg-cyan-500/10 text-cyan-300 border-cyan-500/30'
-                    }`}
-                  >
-                    {translationResult.parsed_rule.severity}
-                  </span>
-                  <span className="text-xs text-zinc-400 font-mono">
-                    ({translationResult.parsed_rule.priority}/10)
-                  </span>
-                </div>
-              </div>
-
-              {/* MITRE ATT&CK */}
-              <MitreBadge
-                tactic={translationResult.parsed_rule.mitre_tactic}
-                source={translationResult.parsed_rule.mitre_source}
-                rawUri={translationResult.parsed_rule.mitre_uri}
-                onTacticChange={(newTactic) => {
-                  translationResult.parsed_rule.mitre_tactic = newTactic;
-                }}
-              />
-
-              {/* Threshold & Frequency */}
-              <div className="md:col-span-2 space-y-1">
-                <span className="text-[11px] font-medium uppercase tracking-wider text-zinc-400">
-                  Aggregation &amp; Time Window
-                </span>
-                <div className="text-xs text-zinc-300 font-mono bg-[#07080b]/90 px-3.5 py-2 rounded-xl border border-white/[0.06]">
-                  {translationResult.parsed_rule.frequency.raw_frequency}
-                </div>
-              </div>
-
-              {/* Group By */}
-              <div className="md:col-span-2 space-y-1">
-                <span className="text-[11px] font-medium uppercase tracking-wider text-zinc-400">
-                  Grouped Fields
-                </span>
-                <div className="flex flex-wrap gap-1.5">
-                  {translationResult.parsed_rule.group_by_fields.length > 0 ? (
-                    translationResult.parsed_rule.group_by_fields.map((f) => (
-                      <span
-                        key={f}
-                        className="px-2.5 py-1 rounded-lg text-xs font-mono bg-white/[0.03] text-zinc-300 border border-white/[0.08]"
-                      >
-                        {f}
-                      </span>
-                    ))
-                  ) : (
-                    <span className="text-base text-zinc-500 italic">None (Realtime single-event)</span>
-                  )}
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Dual-Pane Comparison Grid (KQL vs SPL) */}
-          <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-            {/* KQL Panel */}
-            <div className="workbench-panel p-4 sm:p-5 space-y-4 flex flex-col justify-between">
-              <div className="space-y-4">
-                <div className="flex items-center justify-between border-b border-white/[0.06] pb-3.5">
-                  <div className="flex items-center gap-2.5">
-                    <span className="px-2 py-0.5 text-[10px] font-semibold tracking-wider rounded-md bg-cyan-400/10 text-cyan-300 border border-cyan-400/20">
-                      KQL
-                    </span>
-                    <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-300">
-                      Microsoft Defender XDR
-                    </h3>
-                  </div>
-                  <button
-                    onClick={() => copyToClipboard(translationResult.kql_query, 'kql')}
-                    className="flex items-center gap-1.5 text-xs text-zinc-400 hover:text-white px-2.5 py-1 rounded-lg border border-white/[0.08] hover:bg-white/[0.05] transition-all"
-                    title="Copy KQL Query"
-                  >
-                    {copiedKql ? <Check className="w-3.5 h-3.5 text-emerald-400 stroke-[2]" /> : <Copy className="w-3.5 h-3.5 stroke-[1.75]" />}
-                    <span>{copiedKql ? 'Copied' : 'Copy'}</span>
-                  </button>
-                </div>
-
-                <div className="bg-[#07080b]/90 rounded-xl border border-white/[0.06] p-4 sm:p-5 min-h-[320px] max-h-[460px] overflow-y-auto font-mono text-sm text-cyan-200/90 leading-relaxed">
-                  <pre className="whitespace-pre-wrap text-sm leading-relaxed">{translationResult.kql_query}</pre>
-                </div>
-              </div>
-
-              {/* Coverage Validation */}
-              <ValidationReport
-                validation={translationResult.validation.kql}
-                title="KQL Detection Coverage Audit"
-              />
-            </div>
-
-            {/* SPL Panel */}
-            <div className="workbench-panel p-4 sm:p-5 space-y-4 flex flex-col justify-between">
-              <div className="space-y-4">
-                <div className="flex items-center justify-between border-b border-white/[0.06] pb-3.5">
-                  <div className="flex items-center gap-2.5">
-                    <span className="px-2 py-0.5 text-[10px] font-semibold tracking-wider rounded-md bg-emerald-500/10 text-emerald-300 border border-emerald-500/20">
-                      SPL
-                    </span>
-                    <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-300">
-                      Splunk Enterprise / Cloud
-                    </h3>
-                    {translationResult.deep_mode && (
-                      <span
-                        className={`px-2 py-0.5 text-[10px] font-mono border rounded-sm ${
-                          translationResult.deep_mode_passed
-                            ? 'border-emerald-500/40 bg-emerald-950/30 text-emerald-300'
-                            : 'border-amber-500/40 bg-amber-950/30 text-amber-300'
-                        }`}
-                      >
-                        Deep Mode:{' '}
-                        {translationResult.deep_mode_passed
-                          ? `Validated (${translationResult.deep_mode_attempts || 1}/3)`
-                          : 'Fallback Warning'}
-                      </span>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => setIsSplunkModalOpen(true)}
-                      className="flex items-center gap-1.5 text-xs text-emerald-400 hover:text-emerald-300 px-2.5 py-1 rounded-lg bg-emerald-500/[0.06] border border-emerald-500/30 hover:bg-emerald-500/[0.1] transition-all font-medium"
-                    >
-                      <Database className="w-3.5 h-3.5 stroke-[1.75]" />
-                      <span>Test Live</span>
-                    </button>
-                    <button
-                      onClick={() => copyToClipboard(translationResult.spl_query, 'spl')}
-                      className="flex items-center gap-1.5 text-xs text-zinc-400 hover:text-white px-2.5 py-1 rounded-lg border border-white/[0.08] hover:bg-white/[0.05] transition-all"
-                      title="Copy SPL Query"
-                    >
-                      {copiedSpl ? <Check className="w-3.5 h-3.5 text-emerald-400 stroke-[2]" /> : <Copy className="w-3.5 h-3.5 stroke-[1.75]" />}
-                      <span>{copiedSpl ? 'Copied' : 'Copy'}</span>
-                    </button>
-                  </div>
-                </div>
-
-                <div className="bg-[#07080b]/90 rounded-xl border border-white/[0.06] p-4 sm:p-5 min-h-[320px] max-h-[460px] overflow-y-auto font-mono text-sm text-emerald-200/90 leading-relaxed">
-                  <pre className="whitespace-pre-wrap text-sm leading-relaxed">{translationResult.spl_query}</pre>
-                </div>
-              </div>
-
-              {/* Coverage Validation */}
-              <ValidationReport
-                validation={translationResult.validation.spl}
-                title="SPL Detection Coverage Audit"
-              />
-            </div>
-          </div>
-
-          {/* Historical Telemetry Baseline & Dynamic Threshold Card */}
-          <TelemetryTunerCard tuning_recommendation={translationResult.tuning_recommendation} />
-
-          {/* Threat Analysis & Playbook */}
-          <div className="rounded-2xl border border-white/[0.07] bg-[#0c0d14]/80 backdrop-blur-md p-6 sm:p-8 space-y-6">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-              <div>
-                <h3 className="text-base font-semibold text-white tracking-tight">
-                  Threat Analysis &amp; Analyst Triage Guide
-                </h3>
-                <p className="text-base text-zinc-400 font-light mt-0.5">
-                  Automated synthesis of SOC investigation questions, evasion blindspots, and MITRE mapping.
-                </p>
-              </div>
-              <button
-                onClick={handleGenerateRunbook}
-                disabled={isGeneratingRunbook}
-                className="flex items-center gap-2 px-4 py-2 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] text-cyan-300 border border-white/[0.1] text-xs font-medium transition-all duration-150 cursor-pointer self-start sm:self-auto"
-              >
-                <Sparkles className={`w-3.5 h-3.5 stroke-[1.75] ${isGeneratingRunbook ? 'animate-spin' : ''}`} />
-                <span>{isGeneratingRunbook ? 'Synthesizing...' : 'Generate Threat Runbook'}</span>
-              </button>
-            </div>
-
-            {threatAnalysis && <ThreatAnalysisView analysis={threatAnalysis} />}
-          </div>
-
-          {/* Human MDE Coverage Assessment Card (Strict Safety Boundary) */}
-          <MdeCoverageCard value={mdeCoverage} onChange={setMdeCoverage} />
-
-          {/* Collapsible Diagnostic & Stream View */}
-          <div className="rounded-2xl border border-white/[0.06] bg-[#0c0d14]/50 overflow-hidden">
-            <button
-              onClick={() => setShowDiagnostics(!showDiagnostics)}
-              className="w-full flex items-center justify-between p-4 px-6 text-left hover:bg-white/[0.02] transition-colors"
-            >
-              <div className="flex items-center gap-2.5 text-base font-medium text-zinc-400">
-                <Terminal className="w-4 h-4 stroke-[1.75] text-zinc-500" />
-                <span>Engine Diagnostic Log &amp; Raw Completion Stream</span>
-              </div>
-              {showDiagnostics ? (
-                <ChevronUp className="w-4 h-4 text-zinc-500 stroke-[1.75]" />
-              ) : (
-                <ChevronDown className="w-4 h-4 text-zinc-500 stroke-[1.75]" />
-              )}
-            </button>
-            {showDiagnostics && (
-              <div className="p-6 border-t border-white/[0.06] bg-[#07080b]/90 space-y-2.5">
-                <div className="text-[11px] font-medium uppercase tracking-wider text-zinc-500">
-                  Raw Output Stream
-                </div>
-                <pre className="p-4 rounded-xl border border-white/[0.06] bg-[#07080b] font-mono text-sm text-zinc-400 whitespace-pre-wrap max-h-56 overflow-y-auto leading-relaxed">
-                  {translationResult.raw_llm_output}
-                </pre>
-              </div>
-            )}
-          </div>
-
-          {/* Bottom Git-Ready Artifact Strip */}
-          <div className="rounded-2xl border border-white/[0.08] bg-[#0c0d14]/90 backdrop-blur-md p-6 sm:p-8 flex flex-col sm:flex-row sm:items-center justify-between gap-6">
-            <div className="space-y-1">
-              <h3 className="text-base font-semibold text-white tracking-tight">
-                Final Detection Engineering Artifact
-              </h3>
-              <p className="text-base text-zinc-400 font-light">
-                Merges deterministic metadata, validated queries, AI triage runbook, and human MDE verdict into a git-ready specification.
-              </p>
-            </div>
-
-            <button
-              onClick={handleSaveAndExport}
-              disabled={isSaving || !mdeCoverage.verdict.trim()}
-              className="flex items-center justify-center gap-2.5 px-6 py-3 rounded-xl bg-white hover:bg-zinc-100 disabled:opacity-30 text-[#07080b] font-semibold text-xs sm:text-sm shadow-[0_0_20px_rgba(255,255,255,0.1)] transition-all duration-200 cursor-pointer shrink-0"
-            >
-              <FileDown className="w-4 h-4 stroke-[2]" />
-              <span>{isSaving ? 'Assembling Artifact...' : 'Save & Export Git-Ready .txt'}</span>
-            </button>
-          </div>
-        </div>
+          {tab === 'overview' && <Overview result={result} onQueries={() => setTab('queries')} />}
+          {tab === 'queries' && (
+            <QueryWorkspace
+              result={result}
+              copied={copied}
+              onCopy={copy}
+              onSplunk={() => setSplunkOpen(true)}
+            />
+          )}
+          {tab === 'review' && (
+            <ReviewWorkspace
+              result={result}
+              analysis={analysis}
+              coverage={mdeCoverage}
+              busy={busy}
+              onCoverage={setMdeCoverage}
+              onAnalysis={createAnalysis}
+              onExport={exportRunbook}
+            />
+          )}
+          {tab === 'export' && (
+            <ExportWorkspace saved={saved} canExport={canExport} busy={busy} onExport={exportRunbook} />
+          )}
+        </>
       )}
 
-      {/* Modals */}
-      <SplunkTestModal
-        isOpen={isSplunkModalOpen}
-        onClose={() => setIsSplunkModalOpen(false)}
-        splQuery={translationResult?.spl_query || ''}
-      />
-
-      <GitExportViewer
-        isOpen={isExportOpen}
-        onClose={() => setIsExportOpen(false)}
-        result={savedRunbook}
-      />
+      <SplunkTestModal isOpen={splunkOpen} onClose={() => setSplunkOpen(false)} splQuery={result?.spl_query || ''} />
     </div>
   );
 };
+
+const Overview: React.FC<{ result: TranslateDirectResponse; onQueries: () => void }> = ({ result, onQueries }) => {
+  const parsed = result.parsed_rule;
+  return (
+    <div className="grid gap-4 xl:grid-cols-[1fr_330px]">
+      <div className="workbench-panel p-5">
+        <div className="eyebrow">Parsed metadata</div>
+        <h2 className="mt-2 text-xl font-semibold text-white">{parsed.rule_name}</h2>
+        <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <Metric label="Severity" value={`${parsed.severity} · ${parsed.priority}/10`} />
+          <Metric label="Frequency" value={parsed.frequency.raw_frequency || 'Not specified'} />
+          <Metric label="MITRE tactic" value={parsed.mitre_tactic || 'Needs review'} />
+          <Metric label="Grouped fields" value={parsed.group_by_fields.join(', ') || 'None'} />
+        </div>
+        <div className="mt-5 border-t border-[#202832] pt-4">
+          <div className="eyebrow">Condition clauses</div>
+          <div className="mt-3 space-y-2">
+            {parsed.clauses.length ? parsed.clauses.map((clause, index) => (
+              <div key={`${clause.raw_clause}-${index}`} className="flex flex-wrap items-center gap-2 border-b border-[#202832] py-2 font-mono text-xs">
+                <span className="text-cyan-300">{clause.field_name}</span>
+                <span className="text-slate-600">{clause.operator}</span>
+                <span className={clause.is_negated ? 'text-amber-300' : 'text-slate-300'}>{clause.value}</span>
+                {clause.is_negated && <span className="tag-warning">EXCLUSION</span>}
+              </div>
+            )) : <p className="text-sm text-slate-500">No structured clauses were extracted.</p>}
+          </div>
+        </div>
+      </div>
+      <div className="space-y-4">
+        <TermList title="Required terms" terms={parsed.required_terms} tone="good" />
+        <TermList title="Exclusion terms" terms={parsed.exclusion_terms} tone="warn" />
+        <button className="button-primary w-full" onClick={onQueries}><Code2 size={15} /> Review generated queries <ChevronRight size={15} /></button>
+      </div>
+    </div>
+  );
+};
+
+const QueryWorkspace: React.FC<{
+  result: TranslateDirectResponse;
+  copied: 'kql' | 'spl' | null;
+  onCopy: (value: string, type: 'kql' | 'spl') => void;
+  onSplunk: () => void;
+}> = ({ result, copied, onCopy, onSplunk }) => (
+  <div className="grid gap-4 xl:grid-cols-2">
+    <QueryPanel title="Microsoft Defender / Sentinel" language="KQL" query={result.kql_query} validation={result.validation.kql} copied={copied === 'kql'} onCopy={() => onCopy(result.kql_query, 'kql')} />
+    <QueryPanel title="Splunk Enterprise / Cloud" language="SPL" query={result.spl_query} validation={result.validation.spl} copied={copied === 'spl'} onCopy={() => onCopy(result.spl_query, 'spl')} action={<button className="button-quiet" onClick={onSplunk}><Play size={13} /> Test live</button>} />
+  </div>
+);
+
+const QueryPanel: React.FC<{
+  title: string;
+  language: string;
+  query: string;
+  validation: TranslateDirectResponse['validation']['kql'];
+  copied: boolean;
+  onCopy: () => void;
+  action?: React.ReactNode;
+}> = ({ title, language, query, validation, copied, onCopy, action }) => (
+  <section className="workbench-panel overflow-hidden">
+    <div className="flex items-center justify-between border-b border-[#202832] px-4 py-3">
+      <div><div className="eyebrow">{language}</div><h2 className="mt-1 text-sm font-semibold text-white">{title}</h2></div>
+      <div className="flex items-center gap-2">{action}<button className="icon-button" onClick={onCopy} title={`Copy ${language}`} aria-label={`Copy ${language}`}>{copied ? <Check size={15} /> : <Clipboard size={15} />}</button></div>
+    </div>
+    <pre className="query-output min-h-[330px]">{query}</pre>
+    <div className={`border-t px-4 py-3 ${validation.passed ? 'border-emerald-900/70 bg-emerald-950/20' : 'border-rose-900/70 bg-rose-950/20'}`}>
+      <div className="flex items-center justify-between text-xs">
+        <span className="flex items-center gap-2 font-medium text-slate-200">{validation.passed ? <CheckCircle2 className="text-emerald-400" size={15} /> : <XCircle className="text-rose-400" size={15} />} Coverage validation</span>
+        <span className={validation.passed ? 'text-emerald-300' : 'text-rose-300'}>{validation.coverage_pct}%</span>
+      </div>
+      {!validation.passed && <p className="mt-2 text-xs leading-5 text-rose-300">{validation.notes.join(' ') || 'Review missing required terms or negations.'}</p>}
+    </div>
+  </section>
+);
+
+const ReviewWorkspace: React.FC<{
+  result: TranslateDirectResponse;
+  analysis: ThreatAnalysis | null;
+  coverage: MdeCoverageInput;
+  busy: 'translate' | 'analysis' | 'export' | null;
+  onCoverage: (value: MdeCoverageInput) => void;
+  onAnalysis: () => void;
+  onExport: () => void;
+}> = ({ result, analysis, coverage, busy, onCoverage, onAnalysis, onExport }) => (
+  <div className="space-y-4">
+    <div className="grid gap-4 xl:grid-cols-[1fr_1fr]">
+      <section className="workbench-panel p-5">
+        <div className="flex items-center justify-between"><div><div className="eyebrow">Threat analysis</div><h2 className="mt-1 text-base font-semibold text-white">Operational runbook</h2></div><button className="button-secondary" onClick={onAnalysis} disabled={busy === 'analysis'}>{busy === 'analysis' ? <RefreshCw className="animate-spin" size={14} /> : <Sparkles size={14} />} {analysis ? 'Regenerate' : 'Generate'}</button></div>
+        {analysis ? <div className="mt-4"><ThreatAnalysisView analysis={analysis} /></div> : <p className="mt-5 text-sm leading-6 text-slate-500">Generate a threat summary, ATT&amp;CK mapping, false-positive review, and analyst triage guide.</p>}
+      </section>
+      <MdeCoverageCard value={coverage} onChange={onCoverage} />
+    </div>
+    <div className="flex flex-col justify-between gap-3 border border-[#202832] bg-[#0b0f13] p-4 sm:flex-row sm:items-center">
+      <div className="flex items-start gap-3 text-xs text-slate-400"><UserCheck className="mt-0.5 text-cyan-300" size={16} /><span>Human MDE coverage is required before the runbook can be written to the Git-ready output directory.</span></div>
+      <button className="button-primary" disabled={!result.validation.passed || !coverage.verdict.trim() || busy === 'export'} onClick={onExport}><Download size={15} /> {busy === 'export' ? 'Exporting…' : 'Prepare export'}</button>
+    </div>
+  </div>
+);
+
+const ExportWorkspace: React.FC<{ saved: SaveRunbookResponse | null; canExport: boolean; busy: boolean | string | null; onExport: () => void }> = ({ saved, canExport, busy, onExport }) => (
+  <section className="workbench-panel p-5">
+    <div className="eyebrow">Git-ready output</div>
+    <h2 className="mt-1 text-xl font-semibold text-white">Export reviewed detection package</h2>
+    <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-500">The backend combines parsed metadata, validated KQL/SPL, threat analysis, and the human MDE verdict into an auditable runbook.</p>
+    {!saved && <button className="button-primary mt-6" disabled={!canExport || Boolean(busy)} onClick={onExport}><Download size={15} /> Write runbook</button>}
+    {saved && <div className="mt-6 border border-emerald-900/70 bg-emerald-950/20 p-4"><div className="flex items-center gap-2 text-sm font-medium text-emerald-300"><CheckCircle2 size={16} /> Runbook saved</div><p className="mt-2 font-mono text-xs text-slate-300">{saved.filename}</p><details className="mt-4"><summary className="cursor-pointer text-xs text-slate-400">Preview generated content</summary><pre className="query-output mt-3 max-h-96">{saved.content}</pre></details></div>}
+  </section>
+);
+
+const Metric: React.FC<{ label: string; value: string }> = ({ label, value }) => <div><div className="eyebrow">{label}</div><div className="mt-1 text-sm text-slate-200">{value}</div></div>;
+const TermList: React.FC<{ title: string; terms: string[]; tone: 'good' | 'warn' }> = ({ title, terms, tone }) => <div className="workbench-panel p-4"><div className="eyebrow">{title}</div><div className="mt-3 flex flex-wrap gap-2">{terms.length ? terms.map((term) => <span key={term} className={tone === 'good' ? 'tag-good' : 'tag-warning'}>{term}</span>) : <span className="text-xs text-slate-600">None extracted</span>}</div></div>;

@@ -63,7 +63,7 @@ describe('ModelSelector Component', () => {
       expect.objectContaining({
         provider: 'gemini',
         custom_base_url: 'https://generativelanguage.googleapis.com/v1beta/openai',
-        model_name: 'gemini-2.5-flash',
+        model_name: 'gemini-3.6-flash',
       })
     );
   });

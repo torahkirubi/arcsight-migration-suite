@@ -77,26 +77,26 @@ export const LoginGate: React.FC<LoginGateProps> = ({ onLoginSuccess }) => {
   };
 
   return (
-    <div className="flex min-h-[80vh] items-center justify-center p-4">
-      <div className="w-full max-w-md rounded-2xl border border-white/[0.08] bg-slate-900/80 p-8 shadow-2xl backdrop-blur-xl transition-all">
-        <div className="mb-6 flex flex-col items-center text-center">
-          <div className="mb-3 flex h-14 w-14 items-center justify-center rounded-2xl border border-cyan-500/20 bg-cyan-500/10 text-cyan-400 shadow-inner">
-            {isRegisterMode ? <UserPlus className="h-7 w-7" /> : <Lock className="h-7 w-7" />}
-          </div>
-          <h1 className="text-xl font-semibold tracking-tight text-white">
-            {isRegisterMode ? 'Register SOC Account' : 'Security Operations Login'}
-          </h1>
-          <p className="mt-1 text-xs text-slate-400">
-            {isRegisterMode
-              ? 'ArcSight Rule Migration Suite • Create New Analyst Account'
-              : 'ArcSight Rule Migration Suite • Authenticated Vault Access'}
-          </p>
+    <div className="login-studio">
+      <div className="login-orbit"><span /><span /><span /></div>
+      <div className="login-brand"><span className="brand-mark"><ShieldCheck size={16} /></span><span><strong>arc<span>/</span>shift</strong><small>migration studio</small></span></div>
+      <div className="login-layout">
+        <div className="login-manifest">
+          <div className="eyebrow">Detection engineering / 01</div>
+          <h1>Move old logic<br /><em>forward.</em></h1>
+          <p>A quiet workspace for turning ArcSight rules into reviewed, deployable detections.</p>
+          <div className="login-manifest-line"><span>01</span> parse intent <i /> <span>02</span> translate <i /> <span>03</span> ship safely</div>
         </div>
+        <div className="login-sheet">
+          <div className="login-sheet-icon">{isRegisterMode ? <UserPlus size={18} /> : <Lock size={18} />}</div>
+          <div className="eyebrow">{isRegisterMode ? 'Create analyst access' : 'Secure workspace access'}</div>
+          <h2>{isRegisterMode ? 'Register SOC Account' : 'Security Operations Login'}</h2>
+          <p className="login-sheet-copy">{isRegisterMode ? 'Create an account for your migration workspace.' : 'Sign in to open your protected migration studio.'}</p>
 
         {successMessage && (
           <div
             role="status"
-            className="mb-5 flex items-start gap-2.5 rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3.5 text-xs text-emerald-300"
+            className="login-alert success"
           >
             <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-400" />
             <span className="leading-relaxed">{successMessage}</span>
@@ -106,18 +106,18 @@ export const LoginGate: React.FC<LoginGateProps> = ({ onLoginSuccess }) => {
         {error && (
           <div
             role="alert"
-            className="mb-5 flex items-start gap-2.5 rounded-xl border border-rose-500/30 bg-rose-500/10 p-3.5 text-xs text-rose-300"
+            className="login-alert error"
           >
             <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-rose-400" />
             <span className="leading-relaxed">{error}</span>
           </div>
         )}
 
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form onSubmit={handleSubmit} className="login-form">
           <div>
             <label
               htmlFor="username"
-              className="block text-xs font-medium uppercase tracking-wider text-slate-300"
+              className="login-label"
             >
               Username
             </label>
@@ -132,7 +132,7 @@ export const LoginGate: React.FC<LoginGateProps> = ({ onLoginSuccess }) => {
                 required
                 disabled={isLoading}
                 placeholder="Enter SOC username"
-                className="w-full rounded-xl border border-white/[0.1] bg-slate-800/60 px-3.5 py-2.5 text-sm text-slate-100 placeholder-slate-500 shadow-inner outline-none transition focus:border-cyan-400/50 focus:ring-2 focus:ring-cyan-400/20 disabled:opacity-50"
+                className="login-input"
               />
             </div>
           </div>
@@ -140,7 +140,7 @@ export const LoginGate: React.FC<LoginGateProps> = ({ onLoginSuccess }) => {
           <div>
             <label
               htmlFor="password"
-              className="block text-xs font-medium uppercase tracking-wider text-slate-300"
+              className="login-label"
             >
               Password
             </label>
@@ -155,12 +155,12 @@ export const LoginGate: React.FC<LoginGateProps> = ({ onLoginSuccess }) => {
                 required
                 disabled={isLoading}
                 placeholder={isRegisterMode ? 'Create strong password' : 'Enter password'}
-                className="w-full rounded-xl border border-white/[0.1] bg-slate-800/60 px-3.5 py-2.5 pr-10 text-sm text-slate-100 placeholder-slate-500 shadow-inner outline-none transition focus:border-cyan-400/50 focus:ring-2 focus:ring-cyan-400/20 disabled:opacity-50"
+                className="login-input password"
               />
               <button
                 type="button"
                 onClick={() => setShowPassword(!showPassword)}
-                className="absolute inset-y-0 right-0 flex items-center pr-3 text-slate-400 hover:text-slate-200"
+                className="login-toggle"
                 tabIndex={-1}
                 aria-label={showPassword ? 'Hide secret' : 'Show secret'}
                 title={showPassword ? 'Hide secret' : 'Show secret'}
@@ -174,11 +174,11 @@ export const LoginGate: React.FC<LoginGateProps> = ({ onLoginSuccess }) => {
             </div>
           </div>
 
-          <div className="pt-2">
+          <div>
             <button
               type="submit"
               disabled={isLoading}
-              className="flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 px-4 py-3 text-sm font-semibold text-white shadow-lg shadow-cyan-500/20 transition hover:from-cyan-400 hover:to-blue-500 active:scale-[0.99] disabled:pointer-events-none disabled:opacity-60"
+              className="login-submit"
             >
               {isLoading ? (
                 <>
@@ -199,7 +199,7 @@ export const LoginGate: React.FC<LoginGateProps> = ({ onLoginSuccess }) => {
             </button>
           </div>
 
-          <div className="pt-1 text-center">
+          <div className="login-switch">
             <button
               type="button"
               disabled={isLoading}
@@ -214,6 +214,7 @@ export const LoginGate: React.FC<LoginGateProps> = ({ onLoginSuccess }) => {
             </button>
           </div>
         </form>
+        </div>
       </div>
     </div>
   );

@@ -62,6 +62,7 @@ class BaseLLMClient(ABC):
         max_tokens: int = 4096,
         model_override: Optional[str] = None,
         api_key_override: Optional[str] = None,
+        response_schema: Optional[Dict[str, Any]] = None,
     ) -> str:
         """Submit a completion request and return the text response."""
         pass
@@ -144,20 +145,25 @@ class OpenAICompatibleClient(BaseLLMClient):
         max_tokens: int = 8192,
         model_override: Optional[str] = None,
         api_key_override: Optional[str] = None,
+        response_schema: Optional[Dict[str, Any]] = None,
     ) -> str:
         model = model_override or self.default_model
-        endpoint = f"{self.base_url}/chat/completions"
-        effective_key = self._resolve_api_key(api_key_override)
-        if effective_key and effective_key != "not-needed":
-            effective_key = effective_key.strip().strip('"').strip("'")
-            if effective_key.lower().startswith("bearer "):
-                effective_key = effective_key[7:].strip()
-
         is_gemini = (
             "gemini" in self.provider_name.lower()
             or "google" in self.provider_name.lower()
             or "generativelanguage" in self.base_url.lower()
         )
+        native_gemini = is_gemini and "/openai/" not in self.base_url.lower()
+        endpoint = (
+            f"{self.base_url}/models/{model}:generateContent"
+            if native_gemini
+            else f"{self.base_url}/chat/completions"
+        )
+        effective_key = self._resolve_api_key(api_key_override)
+        if effective_key and effective_key != "not-needed":
+            effective_key = effective_key.strip().strip('"').strip("'")
+            if effective_key.lower().startswith("bearer "):
+                effective_key = effective_key[7:].strip()
 
         # If Gemini provider, ensure API key is configured or raise descriptive error
         if is_gemini:
@@ -180,13 +186,39 @@ class OpenAICompatibleClient(BaseLLMClient):
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})
         messages.append({"role": "user", "content": prompt})
-
-        payload = {
-            "model": model,
-            "messages": messages,
-            "temperature": temperature,
-            "max_tokens": max_tokens,
-        }
+        payload = (
+            {
+                "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+                "generationConfig": {
+                    "temperature": temperature,
+                    "maxOutputTokens": max_tokens,
+                },
+            }
+            if native_gemini
+            else {
+                "model": model,
+                "messages": messages,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+            }
+        )
+        if response_schema:
+            schema_name = response_schema.get("title", "structured_response")
+            if native_gemini:
+                payload["generationConfig"] = {
+                    **payload.get("generationConfig", {}),
+                    "responseMimeType": "application/json",
+                    "responseSchema": response_schema,
+                }
+            else:
+                payload["response_format"] = {
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": schema_name,
+                        "strict": True,
+                        "schema": response_schema,
+                    },
+                }
 
         headers = {
             "Content-Type": "application/json",
@@ -298,12 +330,25 @@ class OpenAICompatibleClient(BaseLLMClient):
                 ) from exc
 
         choices = data.get("choices", [])
-        if not choices:
+        if native_gemini:
+            candidates = data.get("candidates", [])
+            content = (
+                candidates[0].get("content", {}).get("parts", [{}])[0].get("text", "")
+                if candidates else ""
+            )
+            finish_reason = candidates[0].get("finishReason") if candidates else None
+        else:
+            content = ""
+            finish_reason = None
+        if not choices and not native_gemini:
             raise LLMError(f"Empty choices received from {self.provider_name}: {data}")
 
-        choice = choices[0]
-        finish_reason = choice.get("finish_reason")
-        content = choice.get("message", {}).get("content", "") or ""
+        if choices:
+            choice = choices[0]
+            finish_reason = choice.get("finish_reason")
+            content = choice.get("message", {}).get("content", "") or ""
+        if not content and native_gemini:
+            raise LLMError(f"Empty candidates received from {self.provider_name}: {data}")
         if finish_reason == "length":
             logger.warning(
                 f"{self.provider_name} response hit token boundary (finish_reason='length'). "
@@ -484,15 +529,17 @@ def get_llm_client(
         return OpenAICompatibleClient(
             base_url=base_url,
             api_key=resolved_key,
-            default_model=model_name or "gemini-2.5-flash",
+            default_model=model_name or "gemini-3.6-flash",
             provider_name="Google Gemini",
         )
     else:
-        # Default fallback to LM Studio
-        base_url = (custom_base_url or os.environ.get("LM_STUDIO_BASE_URL", "http://localhost:1234/v1")).strip()
+        # Treat unknown providers as user-configured OpenAI-compatible endpoints.
+        # This supports vendors such as Claude, Kimi, and gateway services without
+        # hard-coding their model catalogs or API identities.
+        base_url = (custom_base_url or "").strip()
         return OpenAICompatibleClient(
             base_url=base_url,
-            api_key=clean_key or "lm-studio",
-            default_model=model_name or "qwen2.5-coder-7b-instruct",
-            provider_name="LM Studio (Local)",
+            api_key=clean_key,
+            default_model=model_name or "default-model",
+            provider_name=provider or "Custom Endpoint",
         )
