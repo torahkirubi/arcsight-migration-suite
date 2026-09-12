@@ -14,6 +14,7 @@ Features:
 
 import os
 import json
+import re
 import time
 import logging
 from typing import Any, Dict, List, Optional
@@ -155,9 +156,11 @@ class OpenAICompatibleClient(BaseLLMClient):
             or "google" in self.provider_name.lower()
             or "generativelanguage" in self.base_url.lower()
         )
-        native_gemini = is_gemini and "/openai/" not in self.base_url.lower()
+        has_openai_compat_path = bool(re.search(r"/openai(?:/|$)", self.base_url, re.IGNORECASE))
+        native_gemini = is_gemini and not has_openai_compat_path
+        native_base_url = re.sub(r"/openai/?$", "", self.base_url, flags=re.IGNORECASE).rstrip("/")
         endpoint = (
-            f"{self.base_url}/models/{model}:generateContent"
+            f"{native_base_url}/models/{model}:generateContent"
             if native_gemini
             else f"{self.base_url}/chat/completions"
         )

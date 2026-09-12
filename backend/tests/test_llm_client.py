@@ -137,6 +137,11 @@ class TestLLMClientAuth(unittest.TestCase):
                 called_url = call_args[0]
                 called_headers = call_kwargs.get("headers", {})
 
+                self.assertIn(
+                    "/v1beta/openai/chat/completions",
+                    called_url,
+                )
+                self.assertNotIn("/openai/models/", called_url)
                 # Assert ?key= is appended
                 self.assertIn("key=AIzaSy-sample-key-12345", called_url)
                 # Assert Authorization: Bearer is present
@@ -158,6 +163,32 @@ class TestLLMClientAuth(unittest.TestCase):
                 self.assertIn("key=AIzaSy-sample-key-12345", req.full_url)
                 self.assertEqual(req.get_header("Authorization"), "Bearer AIzaSy-sample-key-12345")
                 self.assertEqual(req.get_header("X-goog-api-key"), "AIzaSy-sample-key-12345")
+
+    def test_gemini_native_endpoint_removes_openai_path(self):
+        """Native Gemini payloads use /v1beta/models/{model}:generateContent."""
+        import asyncio
+        from backend.llm_client import HAS_HTTPX
+
+        client = get_llm_client(
+            provider="gemini",
+            custom_base_url="https://generativelanguage.googleapis.com/v1beta",
+            api_key="AIzaSy-sample-key-12345",
+        )
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "candidates": [{"content": {"parts": [{"text": "native response"}]}}],
+        }
+
+        if HAS_HTTPX:
+            with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
+                mock_post.return_value = mock_resp
+                self.assertEqual(asyncio.run(client.complete(prompt="hello")), "native response")
+                called_url = mock_post.call_args.args[0]
+                payload = mock_post.call_args.kwargs["json"]
+                self.assertIn("/v1beta/models/gemini-2.5-flash:generateContent", called_url)
+                self.assertNotIn("/openai/", called_url)
+                self.assertIn("contents", payload)
 
     def test_default_max_tokens_and_completion_tokens_in_payload(self):
         """Ensure complete() defaults to max_tokens=8192 and only sends max_tokens without max_completion_tokens."""
