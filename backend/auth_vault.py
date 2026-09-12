@@ -24,6 +24,10 @@ from typing import Any, Dict, List, Optional
 from cryptography.fernet import Fernet
 import jwt
 from passlib.context import CryptContext
+try:
+    import bcrypt
+except ImportError:
+    bcrypt = None
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 MAX_BCRYPT_PASSWORD_BYTES = 72
@@ -156,8 +160,10 @@ JWT_ALGORITHM = "HS256"
 
 
 def hash_password(password: str) -> str:
-    """Computes bcrypt hash of password via passlib CryptContext."""
+    """Computes a bcrypt hash without triggering Passlib's incompatible backend probe."""
     validate_password_length(password)
+    if bcrypt is not None:
+        return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("ascii")
     if pwd_context is not None:
         return pwd_context.hash(password)
     salt = "arcsight_vault_salt_secure_2026"
@@ -169,6 +175,12 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
     if pwd_context is not None and hashed_password:
         try:
             if hashed_password.startswith(("$2b$", "$2a$", "$2y$")):
+                if bcrypt is not None:
+                    validate_password_length(plain_password)
+                    return bcrypt.checkpw(
+                        plain_password.encode("utf-8"),
+                        hashed_password.encode("ascii"),
+                    )
                 return pwd_context.verify(plain_password, hashed_password)
         except Exception:
             pass
