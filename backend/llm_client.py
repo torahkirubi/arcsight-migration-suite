@@ -19,6 +19,7 @@ import time
 import logging
 from typing import Any, Dict, List, Optional
 from abc import ABC, abstractmethod
+from urllib.parse import quote
 
 logger = logging.getLogger(__name__)
 
@@ -176,9 +177,9 @@ class OpenAICompatibleClient(BaseLLMClient):
                 raise LLMError("Gemini API key is not configured in vault or environment")
             # For Gemini endpoints, append ?key=<api_key> if key is a standard Google API key (not an Auth key starting with AQ.)
             # and not already in endpoint
-            if "key=" not in endpoint and not effective_key.startswith("AQ."):
+            if native_gemini and "key=" not in endpoint:
                 separator = "&" if "?" in endpoint else "?"
-                endpoint = f"{endpoint}{separator}key={effective_key}"
+                endpoint = f"{endpoint}{separator}key={quote(effective_key, safe='')}"
 
         # Fail fast with clear error if cloud provider is chosen with no API key
         if not effective_key and "cloud" in self.provider_name.lower():
@@ -229,7 +230,8 @@ class OpenAICompatibleClient(BaseLLMClient):
             "Content-Type": "application/json",
         }
         if effective_key and effective_key != "not-needed":
-            headers["Authorization"] = f"Bearer {effective_key}"
+            if not native_gemini:
+                headers["Authorization"] = f"Bearer {effective_key}"
             if is_gemini:
                 headers["x-goog-api-key"] = effective_key
 

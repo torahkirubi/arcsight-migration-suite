@@ -146,7 +146,7 @@ class TestLLMClientAuth(unittest.TestCase):
                 # Assert ?key= is appended
                 self.assertIn("key=AIzaSy-sample-key-12345", called_url)
                 # Assert Authorization: Bearer is present
-                self.assertEqual(called_headers.get("Authorization"), "Bearer AIzaSy-sample-key-12345")
+                self.assertNotIn("Authorization", called_headers)
                 # Assert x-goog-api-key is present
                 self.assertEqual(called_headers.get("x-goog-api-key"), "AIzaSy-sample-key-12345")
         else:
@@ -162,7 +162,7 @@ class TestLLMClientAuth(unittest.TestCase):
 
                 req = mock_urlopen.call_args[0][0]
                 self.assertIn("key=AIzaSy-sample-key-12345", req.full_url)
-                self.assertEqual(req.get_header("Authorization"), "Bearer AIzaSy-sample-key-12345")
+                self.assertIsNone(req.get_header("Authorization"))
                 self.assertEqual(req.get_header("X-goog-api-key"), "AIzaSy-sample-key-12345")
 
     def test_gemini_native_endpoint_removes_openai_path(self):
@@ -277,8 +277,8 @@ class TestLLMClientAuth(unittest.TestCase):
                 with self.assertRaises(LLMTruncationError):
                     asyncio.run(client.complete(prompt="hello"))
 
-    def test_gemini_auth_key_prefixed_aq_omits_query_param(self):
-        """Ensure Gemini auth keys (AQ.*) use Authorization: Bearer and omit ?key= query parameter."""
+    def test_gemini_key_uses_native_api_key_authentication(self):
+        """Ensure native Gemini keys use ?key= and x-goog-api-key, not OAuth bearer auth."""
         from backend.llm_client import HAS_HTTPX
         import json
         import asyncio
@@ -297,8 +297,8 @@ class TestLLMClientAuth(unittest.TestCase):
                 call_args, call_kwargs = mock_post.call_args
                 called_url = call_args[0]
                 called_headers = call_kwargs.get("headers", {})
-                self.assertNotIn("key=", called_url)
-                self.assertEqual(called_headers.get("Authorization"), "Bearer AQ.SampleAuthKey123")
+                self.assertIn("key=AQ.SampleAuthKey123", called_url)
+                self.assertNotIn("Authorization", called_headers)
                 self.assertEqual(called_headers.get("x-goog-api-key"), "AQ.SampleAuthKey123")
         else:
             mock_resp = MagicMock()
@@ -310,8 +310,8 @@ class TestLLMClientAuth(unittest.TestCase):
                 res = asyncio.run(client.complete(prompt="hello"))
                 self.assertEqual(res, "ok")
                 req = mock_urlopen.call_args[0][0]
-                self.assertNotIn("key=", req.full_url)
-                self.assertEqual(req.get_header("Authorization"), "Bearer AQ.SampleAuthKey123")
+                self.assertIn("key=AQ.SampleAuthKey123", req.full_url)
+                self.assertIsNone(req.get_header("Authorization"))
                 self.assertEqual(req.get_header("X-goog-api-key"), "AQ.SampleAuthKey123")
 
     def test_gemini_invalid_auth_key_raises_descriptive_auth_error(self):
