@@ -79,3 +79,7 @@ Desktop.ini
 backend/data/
 
 
+
+# Packaging and Distribution Artifacts
+dist_release/
+*.tar.gz
