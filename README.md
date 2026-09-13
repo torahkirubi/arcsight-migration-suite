@@ -23,6 +23,15 @@ The **ArcSight Migration Suite** solves this by uniting **deterministic parsing 
 
 ---
 
+## v1.5.0 Release Highlights
+
+- **Telemetry Tuner**: Profiles recurring telemetry noise and calculates dynamic suppression thresholds.
+- **AST Exclusion Compiler**: Compiles structured exclusions into deterministic, target-specific KQL and SPL clauses without dropping or merging entity filters.
+- **Gemini 2.5 Flash REST Integration**: Uses the native Gemini `v1beta/models/{model}:generateContent` endpoint and standardized native request/response serialization.
+- **Hardened Authentication Vault**: Uses direct bcrypt password operations, stronger secret handling, bounded query execution, and restricted health-check targets.
+
+---
+
 ## Architecture & Workflow
 
 ```
@@ -120,7 +129,7 @@ The **ArcSight Migration Suite** solves this by uniting **deterministic parsing 
 | | **HTTPX** | Asynchronous HTTP client for LLM and Splunk REST communication |
 | **Validation** | **Splunk Enterprise** | Official Splunk container running on port 8089 (REST) & 8000 (Web) |
 | | **Mock Sysmon Logs** | Windows Event Logs for testing process creation and command-line execution |
-| **AI / LLM** | **Google Gemini 1.5 Flash** | Cloud LLM provider for rapid query generation and self-correction |
+| **AI / LLM** | **Google Gemini 2.5 Flash** | Cloud LLM provider for rapid query generation and self-correction |
 | | **LM Studio / Ollama** | Optional local OpenAI-compatible LLM execution for sensitive air-gapped environments |
 | **Infrastructure**| **Docker & Docker Compose** | Multi-container orchestration (`splunk`, `backend`, `frontend`) |
 
@@ -166,6 +175,21 @@ Start all services (Splunk Enterprise, FastAPI Backend, and React Frontend) with
 docker compose up --build -d
 ```
 
+For subsequent local development runs, rebuild only when dependencies or source images
+change, then follow service logs as needed:
+
+```bash
+docker compose build
+docker compose up -d
+docker compose logs -f backend frontend
+```
+
+Stop the local stack with:
+
+```bash
+docker compose down
+```
+
 Service endpoints:
 - **Frontend Dashboard**: [http://localhost:3000](http://localhost:3000)
 - **Backend API Docs**: [http://localhost:8001/docs](http://localhost:8001/docs)
@@ -174,21 +198,24 @@ Service endpoints:
 
 ### Portable Offline Installation (v1.5.0)
 
-Download `arcsight-migration-v1.5.0-portable.tar.gz` from the
-[v1.5.0 GitHub release](https://github.com/torahkirubi/arcsight-migration-suite/releases/tag/v1.5.0)
-on a machine with Docker and Docker Compose installed. Then run:
+Download `arcsight-migration-v1.5.0-portable.tar.gz` from the GitHub Releases tab
+([v1.5.0 release](https://github.com/torahkirubi/arcsight-migration-suite/releases/tag/v1.5.0))
+on a machine with Docker and Docker Compose installed. Extract it into a dedicated
+directory, configure the environment, and start the bundled services:
 
 ```bash
-mkdir dist_release
-tar -xzf arcsight-migration-v1.5.0-portable.tar.gz -C dist_release
-cd dist_release
+mkdir arcsight-migration-v1.5.0
+cd arcsight-migration-v1.5.0
+tar -xzvf ../arcsight-migration-v1.5.0-portable.tar.gz
 cp .env.example .env
-# Edit .env and set required credentials and secrets.
 ./run.sh
 ```
 
 The bundle contains prebuilt backend and frontend images, Compose configuration,
-and a startup script. No internet connection is required after the archive is downloaded.
+and a startup script. Edit `.env` with deployment credentials and secrets before
+starting. The UI is available at http://localhost:3000 and the API documentation
+at http://localhost:8001/docs. No internet connection is required after the archive
+is downloaded.
 
 ---
 
