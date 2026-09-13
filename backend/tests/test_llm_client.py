@@ -191,6 +191,39 @@ class TestLLMClientAuth(unittest.TestCase):
                 self.assertNotIn("/openai/", called_url)
                 self.assertIn("contents", payload)
 
+    def test_gemini_response_schema_uses_supported_subset(self):
+        """Gemini response schemas must not contain Pydantic $ref/$defs/anyOf constructs."""
+        import asyncio
+        import json
+        from backend.llm_client import HAS_HTTPX
+
+        client = get_llm_client(provider="gemini", api_key="AIzaSy-sample-key-12345")
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "candidates": [{"content": {"parts": [{"text": '{"ok": true}'}]}}],
+        }
+        schema = {
+            "type": "object",
+            "$defs": {"Entry": {"type": "object", "properties": {"value": {"type": "string"}}}},
+            "properties": {
+                "entries": {
+                    "type": "array",
+                    "items": {"anyOf": [{"$ref": "#/$defs/Entry"}, {"type": "null"}]},
+                }
+            },
+        }
+        if HAS_HTTPX:
+            with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
+                mock_post.return_value = mock_resp
+                asyncio.run(client.complete(prompt="hello", response_schema=schema))
+                response_schema = mock_post.call_args.kwargs["json"]["generationConfig"]["responseSchema"]
+                encoded = json.dumps(response_schema)
+                self.assertNotIn("$defs", encoded)
+                self.assertNotIn("$ref", encoded)
+                self.assertNotIn("anyOf", encoded)
+                self.assertNotIn("additionalProperties", encoded)
+
     def test_default_max_tokens_and_completion_tokens_in_payload(self):
         """Ensure complete() defaults to max_tokens=8192 and only sends max_tokens without max_completion_tokens."""
         from backend.llm_client import HAS_HTTPX

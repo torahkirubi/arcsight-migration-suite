@@ -52,6 +52,52 @@ class LLMAuthError(LLMError):
     pass
 
 
+def _gemini_response_schema(schema: Dict[str, Any]) -> Dict[str, Any]:
+    """Convert Pydantic JSON Schema to Gemini's supported response-schema subset."""
+    definitions = schema.get("$defs", {})
+
+    def convert(node: Any) -> Dict[str, Any]:
+        if not isinstance(node, dict):
+            return {}
+        ref = node.get("$ref")
+        if isinstance(ref, str) and ref.startswith("#/$defs/"):
+            return convert(definitions.get(ref.rsplit("/", 1)[-1], {}))
+
+        alternatives = node.get("anyOf") or node.get("oneOf")
+        if alternatives:
+            branches = [convert(item) for item in alternatives if item.get("type") != "null"]
+            if branches and all(item.get("type") == "object" for item in branches):
+                merged: Dict[str, Any] = {"type": "object", "properties": {}}
+                for branch in branches:
+                    merged["properties"].update(branch.get("properties", {}))
+                    if branch.get("required"):
+                        merged.setdefault("required", []).extend(branch["required"])
+                if "required" in merged:
+                    merged["required"] = list(dict.fromkeys(merged["required"]))
+                return merged
+            return branches[0] if branches else {}
+
+        result: Dict[str, Any] = {}
+        if isinstance(node.get("type"), str):
+            result["type"] = node["type"]
+        if isinstance(node.get("enum"), list):
+            result["enum"] = node["enum"]
+        if result.get("type") == "object":
+            result["properties"] = {
+                str(name): convert(value)
+                for name, value in node.get("properties", {}).items()
+            }
+            required = node.get("required")
+            if isinstance(required, list) and required:
+                result["required"] = required
+        elif result.get("type") == "array" and "items" in node:
+            result["items"] = convert(node["items"])
+        return result
+
+    normalized = convert(schema)
+    return normalized if normalized.get("type") else {"type": "object", "properties": {}}
+
+
 class BaseLLMClient(ABC):
     """Abstract interface for LLM client implementations."""
 
@@ -214,7 +260,7 @@ class OpenAICompatibleClient(BaseLLMClient):
                 payload["generationConfig"] = {
                     **payload.get("generationConfig", {}),
                     "responseMimeType": "application/json",
-                    "responseSchema": response_schema,
+                    "responseSchema": _gemini_response_schema(response_schema),
                 }
             else:
                 payload["response_format"] = {
@@ -238,6 +284,7 @@ class OpenAICompatibleClient(BaseLLMClient):
         redacted_key = (
             effective_key[:6] + "..." if effective_key and len(effective_key) > 6 else (effective_key or "<empty>")
         )
+        log_endpoint = endpoint.split("?", 1)[0]
 
         if HAS_HTTPX:
             timeout_cfg = httpx.Timeout(120.0, connect=60.0, read=120.0, write=60.0, pool=60.0)
@@ -257,11 +304,11 @@ class OpenAICompatibleClient(BaseLLMClient):
                 if response.status_code in (401, 403):
                     logger.error(
                         f"Auth error from {self.provider_name} (HTTP {response.status_code}): "
-                        f"endpoint={endpoint}, key_prefix={redacted_key}, response={response.text}"
+                        f"endpoint={log_endpoint}, key_prefix={redacted_key}, response={response.text}"
                     )
                     raise LLMAuthError(
                         f"{response.status_code} Unauthorized from {self.provider_name}: Invalid or missing API key. "
-                        f"URL: {endpoint}, Key: {redacted_key}. Response: {response.text[:200]}"
+                        f"URL: {log_endpoint}, Key: {redacted_key}. Response: {response.text[:200]}"
                     )
                 elif response.status_code == 400 and ("Invalid Auth key" in response.text or "API_KEY_SERVICE_BLOCKED" in response.text):
                     logger.error(
@@ -276,7 +323,7 @@ class OpenAICompatibleClient(BaseLLMClient):
                 elif response.status_code == 429:
                     logger.error(
                         f"Rate limit from {self.provider_name} (HTTP 429): "
-                        f"endpoint={endpoint}, key_prefix={redacted_key}, response={response.text}"
+                        f"endpoint={log_endpoint}, key_prefix={redacted_key}, response={response.text}"
                     )
                     raise LLMConnectionError(
                         f"Rate limit exceeded (429) from {self.provider_name}: {response.text[:200]}"
@@ -284,11 +331,11 @@ class OpenAICompatibleClient(BaseLLMClient):
                 elif response.status_code >= 400:
                     logger.error(
                         f"{self.provider_name} HTTP {response.status_code}: "
-                        f"endpoint={endpoint}, key_prefix={redacted_key}, response={response.text}"
+                        f"endpoint={log_endpoint}, key_prefix={redacted_key}, response={response.text}"
                     )
                     raise LLMError(
                         f"{self.provider_name} returned error {response.status_code} "
-                        f"(URL: {endpoint}, Key: {redacted_key}): {response.text}"
+                        f"(URL: {log_endpoint}, Key: {redacted_key}): {response.text}"
                     )
 
                 data = response.json()
@@ -310,12 +357,12 @@ class OpenAICompatibleClient(BaseLLMClient):
                     pass
                 logger.error(
                     f"{self.provider_name} HTTP {exc.code}: "
-                    f"endpoint={endpoint}, key_prefix={redacted_key}, response={err_body}"
+                    f"endpoint={log_endpoint}, key_prefix={redacted_key}, response={err_body}"
                 )
                 if exc.code in (401, 403):
                     raise LLMAuthError(
                         f"{exc.code} Unauthorized from {self.provider_name}: Invalid or missing API key. "
-                        f"URL: {endpoint}, Key: {redacted_key}. Response: {err_body[:200]}"
+                        f"URL: {log_endpoint}, Key: {redacted_key}. Response: {err_body[:200]}"
                     ) from exc
                 elif exc.code == 400 and ("Invalid Auth key" in err_body or "API_KEY_SERVICE_BLOCKED" in err_body):
                     logger.error(
@@ -329,7 +376,7 @@ class OpenAICompatibleClient(BaseLLMClient):
                     ) from exc
                 raise LLMError(
                     f"{self.provider_name} returned error {exc.code} "
-                    f"(URL: {endpoint}, Key: {redacted_key}): {err_body}"
+                    f"(URL: {log_endpoint}, Key: {redacted_key}): {err_body}"
                 ) from exc
             except urllib.error.URLError as exc:
                 raise LLMConnectionError(
