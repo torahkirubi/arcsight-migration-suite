@@ -172,6 +172,24 @@ Service endpoints:
 - **Splunk Enterprise Web UI**: [http://localhost:8000](http://localhost:8000) *(credentials come from `.env`)*
 - **Splunk REST API**: [https://localhost:8089](https://localhost:8089)
 
+### Portable Offline Installation (v1.5.0)
+
+Download `arcsight-migration-v1.5.0-portable.tar.gz` from the
+[v1.5.0 GitHub release](https://github.com/torahkirubi/arcsight-migration-suite/releases/tag/v1.5.0)
+on a machine with Docker and Docker Compose installed. Then run:
+
+```bash
+mkdir dist_release
+tar -xzf arcsight-migration-v1.5.0-portable.tar.gz -C dist_release
+cd dist_release
+cp .env.example .env
+# Edit .env and set required credentials and secrets.
+./run.sh
+```
+
+The bundle contains prebuilt backend and frontend images, Compose configuration,
+and a startup script. No internet connection is required after the archive is downloaded.
+
 ---
 
 ## Manual Local Development Setup
